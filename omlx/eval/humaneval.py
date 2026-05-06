@@ -161,6 +161,43 @@ def _indent_top_level_lines(body: str) -> str:
     return "\n".join(fixed)
 
 
+def _normalize_body_indentation(body: str) -> str:
+    """Normalize completions with first-line-zero/rest-overindented shape.
+
+    Some chat completions arrive as function bodies where top-level statements
+    have inconsistent bases, e.g. the first line has 0 spaces while subsequent
+    top-level lines have 8. Map that family to a normal function body:
+    0 -> 4, 8 -> 4, 12 -> 8, preserving relative nested blocks.
+    """
+    body = body.strip("\n")
+    lines = body.split("\n")
+    nonzero_indents = []
+    for line in lines:
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent > 0:
+            nonzero_indents.append(indent)
+
+    if not nonzero_indents:
+        return textwrap.indent(body, "    ")
+
+    dedent_by = max(0, min(nonzero_indents) - 4)
+    fixed = []
+    for line in lines:
+        if not line.strip():
+            fixed.append(line)
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            fixed.append("    " + line)
+        elif dedent_by > 0 and indent >= dedent_by:
+            fixed.append(line[dedent_by:])
+        else:
+            fixed.append(line)
+    return "\n".join(fixed)
+
+
 def _set_resource_limits():
     """Set resource limits for subprocess."""
     try:
@@ -246,9 +283,17 @@ def _candidate_codes(response: str, prompt: str) -> list[tuple[str, str]]:
         candidates.append(
             ("standalone_function", _prepend_imports_if_needed(extracted, prompt))
         )
+        candidates.append((
+            "canonical_normalize_indent",
+            prompt + _normalize_body_indentation(extracted),
+        ))
     else:
         candidates.append(("canonical_indented", prompt + _indent_body_if_needed(extracted)))
         candidates.append(("canonical_top_level_indent", prompt + _indent_top_level_lines(extracted)))
+        candidates.append((
+            "canonical_normalize_indent",
+            prompt + _normalize_body_indentation(extracted),
+        ))
 
     seen: set[str] = set()
     unique: list[tuple[str, str]] = []

@@ -300,6 +300,101 @@ class TestHumanEval:
         assert result.passed is True
         assert result.pass_mode == "canonical_top_level_indent"
 
+    def test_overindented_body_base_is_normalized(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": (
+                "def sort_even(l: list):\n"
+                "    \"\"\"Sort values at even indexes.\"\"\"\n"
+            ),
+            "test": (
+                "def check(candidate):\n"
+                "    assert candidate([5, 6, 3, 4]) == [3, 6, 5, 4]\n"
+                "    assert candidate([1, 2, 3]) == [1, 2, 3]"
+            ),
+            "entry_point": "sort_even",
+        }
+        response = (
+            "even_indices = [l[i] for i in range(0, len(l), 2)]\n"
+            "        even_indices.sort()\n"
+            "        result = l[:]\n"
+            "        for i, val in enumerate(even_indices):\n"
+            "            result[i * 2] = val\n"
+            "        return result"
+        )
+        result = HumanEvalBenchmark().evaluate_response(response, item)
+        assert result.passed is True
+        assert result.pass_mode == "canonical_normalize_indent"
+
+    def test_overindented_nested_helper_is_normalized(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": (
+                "def prime_length(string):\n"
+                "    \"\"\"Return whether the string length is prime.\"\"\"\n"
+            ),
+            "test": (
+                "def check(candidate):\n"
+                "    assert candidate('abc') is True\n"
+                "    assert candidate('abcd') is False"
+            ),
+            "entry_point": "prime_length",
+        }
+        response = (
+            "def is_prime(n):\n"
+            "        if n < 2:\n"
+            "            return False\n"
+            "        for i in range(2, int(n ** 0.5) + 1):\n"
+            "            if n % i == 0:\n"
+            "                return False\n"
+            "        return True\n"
+            "    return is_prime(len(string))"
+        )
+        result = HumanEvalBenchmark().evaluate_response(response, item)
+        assert result.passed is True
+        assert result.pass_mode == "canonical_normalize_indent"
+
+    def test_overindented_import_body_is_normalized(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": (
+                "def fruit_distribution(s, n):\n"
+                "    \"\"\"Return missing fruits.\"\"\"\n"
+            ),
+            "test": (
+                "def check(candidate):\n"
+                "    assert candidate('5 apples and 6 oranges', 19) == 8"
+            ),
+            "entry_point": "fruit_distribution",
+        }
+        response = (
+            "import re\n"
+            "        nums = re.findall(r'\\d+', s)\n"
+            "        apples = int(nums[0])\n"
+            "        oranges = int(nums[1])\n"
+            "        return n - apples - oranges"
+        )
+        result = HumanEvalBenchmark().evaluate_response(response, item)
+        assert result.passed is True
+        assert result.pass_mode == "canonical_normalize_indent"
+
+    def test_normalized_wrong_logic_still_fails(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": (
+                "def maximum(arr, k):\n"
+                "    \"\"\"Return k largest elements.\"\"\"\n"
+            ),
+            "test": (
+                "def check(candidate):\n"
+                "    assert candidate([1, 2, 3], 0) == []"
+            ),
+            "entry_point": "maximum",
+        }
+        result = HumanEvalBenchmark().evaluate_response("return sorted(arr)[-k:]", item)
+        assert result.passed is False
+        assert result.failure_type == "wrong_answer"
+
     def test_full_function_response_gets_prompt_imports(self):
         from omlx.eval.humaneval import HumanEvalBenchmark
         item = {
