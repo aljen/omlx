@@ -397,6 +397,7 @@
             // bench is running" banner + disables Start so the user doesn't
             // race a 409 on the server.
             benchOtherActive: null,
+            benchUploadToOmlx: false,
 
             // Bench sub-tab & dropdown
             benchTab: 'throughput',
@@ -910,6 +911,10 @@
                     if (response.ok) {
                         const data = await response.json();
                         this.models = data.models || [];
+                        for (const local of this.hfModels) {
+                            const live = this.models.find(m => m.id === local.name);
+                            if (live?.catalog) local.catalog = live.catalog;
+                        }
                     } else if (response.status === 401) {
                         window.location.href = '/admin';
                     }
@@ -939,6 +944,78 @@
                 } finally {
                     this.reloading = false;
                 }
+            },
+
+            modelSourceLabel(model) {
+                const source = model?.catalog?.source || 'unknown';
+                if (source === 'hf') return 'HF';
+                if (source === 'modelscope') return 'MS';
+                if (source === 'local') return 'Local';
+                return 'Unknown';
+            },
+
+            modelUpdateLabel(model) {
+                const status = model?.catalog?.update_status || 'not_checked';
+                if (status === 'current') return 'Current';
+                if (status === 'update_available') return 'Update';
+                if (status === 'check_failed') return 'Check failed';
+                return 'Not checked';
+            },
+
+            modelPerfLabel(model) {
+                const summary = model?.catalog?.best_perf_summary || {};
+                if (!summary.tg_tps && !summary.pp_tps) return '';
+                const pp = summary.pp_tps ? summary.pp_tps.toFixed(1) : '-';
+                const tg = summary.tg_tps ? summary.tg_tps.toFixed(1) : '-';
+                return `pp ${pp} / tg ${tg}`;
+            },
+
+            async checkModelUpdate(model) {
+                if (!model?.name) return;
+                try {
+                    const response = await fetch(`/admin/api/models/${encodeURIComponent(model.name)}/check-update`, { method: 'POST' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        model.catalog = data.catalog || model.catalog;
+                        const live = this.models.find(m => m.id === model.name);
+                        if (live) live.catalog = model.catalog;
+                    } else if (response.status === 401) {
+                        window.location.href = '/admin';
+                    }
+                } catch (err) {
+                    console.error('Failed to check model update:', err);
+                }
+            },
+
+            async checkAllModelUpdates() {
+                try {
+                    const response = await fetch('/admin/api/models/check-updates', { method: 'POST' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        for (const item of data.results || []) {
+                            const local = this.hfModels.find(m => m.name === item.model_id);
+                            if (local) local.catalog = item.catalog || local.catalog;
+                            const live = this.models.find(m => m.id === item.model_id);
+                            if (live) live.catalog = item.catalog || live.catalog;
+                        }
+                    } else if (response.status === 401) {
+                        window.location.href = '/admin';
+                    }
+                } catch (err) {
+                    console.error('Failed to check model updates:', err);
+                }
+            },
+
+            openModelSettingsByName(modelName) {
+                const model = this.models.find(m => m.id === modelName);
+                if (model) this.openModelSettings(model);
+            },
+
+            benchModel(modelName) {
+                this.benchModelId = modelName;
+                this.mainTab = 'bench';
+                this.benchTab = 'throughput';
+                this.syncTabStateToUrl();
             },
 
             async updateModelSetting(modelId, field, value) {
@@ -2539,6 +2616,7 @@
                             prompt_lengths: promptLengths,
                             generation_length: 128,
                             batch_sizes: batchSizes,
+                            upload_to_omlx: this.benchUploadToOmlx,
                         }),
                     });
 
@@ -2604,14 +2682,16 @@
                                 }
                             }
                         } else if (data.type === 'done') {
-                            // Benchmark tests done, uploading starts
-                            this.benchUploading = true;
-                            this.benchProgress = {
-                                phase: 'upload',
-                                message: 'Uploading to community benchmarks...',
-                                current: 0,
-                                total: 0,
-                            };
+                            if (this.benchUploadToOmlx) {
+                                // Benchmark tests done, uploading starts
+                                this.benchUploading = true;
+                                this.benchProgress = {
+                                    phase: 'upload',
+                                    message: 'Uploading to community benchmarks...',
+                                    current: 0,
+                                    total: 0,
+                                };
+                            }
                             this.loadModels();
                         } else if (data.type === 'upload') {
                             // Dedupe on replay: upload entries are unique by context_length.
@@ -3880,6 +3960,10 @@
                     if (response.ok) {
                         const data = await response.json();
                         this.hfModels = data.models || [];
+                        for (const local of this.hfModels) {
+                            const live = this.models.find(m => m.id === local.name);
+                            if (live?.catalog) local.catalog = live.catalog;
+                        }
                         this.hfModelsLoaded = true;
                     } else if (response.status === 401) {
                         window.location.href = '/admin';
