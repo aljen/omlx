@@ -670,6 +670,7 @@
   "acc_bench.config.queue_label": "대기열",
   "acc_bench.results.section_label": "결과",
   "acc_bench.results.clear": "결과 초기화",
+  "acc_bench.results.delete_saved_tooltip": "저장된 결과 삭제",
   "acc_bench.results.download": "Download",
   "acc_bench.results.show_categories": "카테고리 분류 보기",
   "acc_bench.results.hide_categories": "카테고리 분류 숨기기",

@@ -5406,6 +5406,20 @@ async def reset_accuracy_results(
     return {"status": "reset"}
 
 
+@router.delete("/api/bench/accuracy/results/{result_id}")
+async def delete_accuracy_result(
+    result_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    """Delete one accumulated accuracy benchmark result."""
+    from .accuracy_benchmark import delete_accumulated_result
+
+    if not delete_accumulated_result(result_id):
+        raise HTTPException(status_code=404, detail=f"Result {result_id} not found")
+
+    return {"status": "deleted", "result_id": result_id}
+
+
 @router.post("/api/bench/accuracy/cancel")
 async def cancel_accuracy_queue(
     is_admin: bool = Depends(require_admin),

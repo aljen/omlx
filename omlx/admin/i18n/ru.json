@@ -670,6 +670,7 @@
   "acc_bench.config.queue_label": "Очередь",
   "acc_bench.results.section_label": "Результаты",
   "acc_bench.results.clear": "Очистить результаты",
+  "acc_bench.results.delete_saved_tooltip": "Удалить сохраненный результат",
   "acc_bench.results.download": "Скачать",
   "acc_bench.results.show_categories": "Показать разбивку по категориям",
   "acc_bench.results.hide_categories": "Скрыть разбивку по категориям",

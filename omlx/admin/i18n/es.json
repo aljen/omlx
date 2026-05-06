@@ -670,6 +670,7 @@
   "acc_bench.config.queue_label": "Cola",
   "acc_bench.results.section_label": "Resultados",
   "acc_bench.results.clear": "Limpiar Resultados",
+  "acc_bench.results.delete_saved_tooltip": "Eliminar resultado guardado",
   "acc_bench.results.download": "Descargar",
   "acc_bench.results.show_categories": "Mostrar desglose por categoría",
   "acc_bench.results.hide_categories": "Ocultar desglose por categoría",

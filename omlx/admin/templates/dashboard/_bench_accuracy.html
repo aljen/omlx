@@ -235,6 +235,7 @@
                                             <div class="flex items-center gap-2">
                                                 <h4 class="text-sm font-semibold text-neutral-900" x-text="r.benchmark.toUpperCase()"></h4>
                                                 <span class="text-xs font-medium text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded" x-text="r.model_id"></span>
+                                                <span class="text-xs font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded" x-text="(r.batch_size || 1) + 'x batch'"></span>
                                                 <template x-if="r.thinking_used">
                                                     <span class="text-xs font-medium text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">{{ t('acc_bench.results.thinking_badge') }}</span>
                                                 </template>
@@ -275,6 +276,12 @@
                                                     class="w-full px-3 py-1.5 text-xs text-left text-neutral-600 hover:bg-neutral-50">TXT</button>
                                         </div>
                                     </div>
+                                    <!-- Delete one saved result -->
+                                    <button @click="deleteAccResult(r)"
+                                            class="p-1.5 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg transition-all"
+                                            :title="window.t('acc_bench.results.delete_saved_tooltip')">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
                                 </div>
 
                                 <!-- Category breakdown table -->

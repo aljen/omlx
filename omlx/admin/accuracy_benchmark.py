@@ -4,15 +4,18 @@
 Orchestrates MMLU, HellaSwag, TruthfulQA, GSM8K, and LiveCodeBench
 evaluations with real-time progress reporting via SSE events.
 
-Supports server-side queue and persistent result accumulation.
-Results survive browser close and persist until explicitly reset.
+Supports server-side queue and saved result history.
+Completed results persist under the oMLX base path until explicitly deleted.
 """
 
 import asyncio
+import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import BaseModel, field_validator
@@ -22,8 +25,10 @@ logger = logging.getLogger(__name__)
 # Module-level storage for active benchmark runs
 _accuracy_runs: dict[str, "AccuracyBenchmarkRun"] = {}
 
-# Accumulated results — persists until explicit reset
+# Accumulated results loaded from/saved to process-local history storage.
 _accumulated_results: list[dict] = []
+_result_storage_dir: Optional[Path] = None
+_result_paths: dict[str, Path] = {}
 
 # Server-side queue
 _queue: list["AccuracyBenchmarkRequest"] = []
@@ -134,14 +139,119 @@ def cleanup_old_runs() -> None:
 # --- Accumulated results ---
 
 
+def configure_accuracy_result_storage(base_path: Optional[Path]) -> None:
+    """Configure persisted accuracy result storage and load saved history."""
+    global _result_storage_dir
+
+    _accumulated_results.clear()
+    _result_paths.clear()
+
+    if base_path is None:
+        _result_storage_dir = None
+        return
+
+    _result_storage_dir = Path(base_path) / "benchmarks" / "accuracy" / "results"
+    _load_accumulated_results()
+
+
+def _load_accumulated_results() -> None:
+    """Load saved benchmark results from disk into memory."""
+    if _result_storage_dir is None:
+        return
+
+    try:
+        _result_storage_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Failed to create accuracy result directory: {e}")
+        return
+
+    for path in sorted(_result_storage_dir.glob("*.json"), reverse=True):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                result = json.load(f)
+        except Exception as e:
+            logger.warning(f"Skipping invalid accuracy result {path}: {e}")
+            continue
+
+        if not isinstance(result, dict):
+            logger.warning(f"Skipping non-object accuracy result {path}")
+            continue
+
+        result_id = result.get("result_id")
+        if not isinstance(result_id, str) or not result_id:
+            result_id = path.stem.rsplit("-", 1)[-1] or str(uuid.uuid4())[:8]
+            result["result_id"] = result_id
+
+        _accumulated_results.append(result)
+        _result_paths[result_id] = path
+
+
+def _save_accumulated_result(result: dict) -> None:
+    """Persist one completed benchmark result if storage is configured."""
+    if _result_storage_dir is None:
+        return
+
+    try:
+        _result_storage_dir.mkdir(parents=True, exist_ok=True)
+        created_at = result.setdefault(
+            "created_at",
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        result_id = result.get("result_id") or str(uuid.uuid4())[:8]
+        result["result_id"] = result_id
+        stamp = str(created_at).replace(":", "").replace("+", "").replace("/", "-")
+        path = _result_storage_dir / f"{stamp}-{result_id}.json"
+        tmp_path = path.with_suffix(".json.tmp")
+
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+
+        tmp_path.replace(path)
+        _result_paths[result_id] = path
+    except Exception as e:
+        logger.error(f"Failed to persist accuracy result: {e}")
+
+
 def get_accumulated_results() -> list[dict]:
     """Get all accumulated benchmark results."""
     return _accumulated_results
 
 
+def delete_accumulated_result(result_id: str) -> bool:
+    """Delete one accumulated result by ID, including its saved file."""
+    for idx, result in enumerate(_accumulated_results):
+        if result.get("result_id") == result_id:
+            del _accumulated_results[idx]
+            path = _result_paths.pop(result_id, None)
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as e:
+                    logger.warning(f"Failed to delete accuracy result {path}: {e}")
+            return True
+    return False
+
+
 def reset_accumulated_results() -> None:
-    """Clear all accumulated results."""
+    """Clear all accumulated results, including saved files."""
     _accumulated_results.clear()
+    if _result_storage_dir is not None:
+        paths = set(_result_paths.values())
+        if _result_storage_dir.exists():
+            paths.update(_result_storage_dir.glob("*.json"))
+        for path in paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning(f"Failed to delete accuracy result {path}: {e}")
+    _result_paths.clear()
+
+
+def _append_accumulated_result(result: dict) -> None:
+    """Append and persist one completed benchmark result."""
+    _accumulated_results.append(result)
+    _save_accumulated_result(result)
 
 
 # --- Queue management ---
@@ -172,7 +282,12 @@ def get_queue_status() -> dict:
         # the result card alone tells the story.
         "phase": phase,
         "queue": [
-            {"model_id": r.model_id, "benchmarks": list(r.benchmarks.keys())}
+            {
+                "model_id": r.model_id,
+                "benchmarks": list(r.benchmarks.keys()),
+                "batch_size": r.batch_size,
+                "enable_thinking": r.enable_thinking,
+            }
             for r in _queue
         ],
     }
@@ -461,9 +576,11 @@ async def run_accuracy_benchmark(
 
             # Build result
             result_data = {
+                "result_id": str(uuid.uuid4())[:8],
                 "model_id": request.model_id,
                 "benchmark": result.benchmark_name,
                 "benchmark_variant": result.benchmark_variant,
+                "batch_size": request.batch_size,
                 "accuracy": round(result.accuracy, 4),
                 "thinking_used": result.thinking_used,
                 "total": result.total_questions,
@@ -491,8 +608,8 @@ async def run_accuracy_benchmark(
                     k: round(v, 4) for k, v in result.category_scores.items()
                 }
 
-            # Accumulate persistently
-            _accumulated_results.append(result_data)
+            # Accumulate and persist completed results.
+            _append_accumulated_result(result_data)
 
             run.results.append(result_data)
             completed += 1

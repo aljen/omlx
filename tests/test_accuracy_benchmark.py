@@ -2,6 +2,7 @@
 """Unit tests for accuracy benchmark orchestration."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,9 +12,12 @@ from omlx.admin.accuracy_benchmark import (
     AccuracyBenchmarkRequest,
     AccuracyBenchmarkRun,
     _accumulated_results,
+    _append_accumulated_result,
     add_to_queue,
     cleanup_old_runs,
+    configure_accuracy_result_storage,
     create_run,
+    delete_accumulated_result,
     get_accumulated_results,
     get_queue_status,
     get_run,
@@ -80,6 +84,7 @@ class TestQueueAndResults:
     def setup_method(self):
         from omlx.admin.accuracy_benchmark import _queue
         _queue.clear()
+        configure_accuracy_result_storage(None)
         reset_accumulated_results()
 
     def test_add_to_queue(self):
@@ -103,16 +108,92 @@ class TestQueueAndResults:
         assert len(results) == 1
         assert results[0]["model_id"] == "m1"
 
+    def test_delete_accumulated_result(self):
+        _accumulated_results.append({"result_id": "a1", "model_id": "m1"})
+        _accumulated_results.append({"result_id": "b2", "model_id": "m2"})
+
+        assert delete_accumulated_result("a1") is True
+        results = get_accumulated_results()
+        assert len(results) == 1
+        assert results[0]["result_id"] == "b2"
+
+    def test_delete_accumulated_result_not_found(self):
+        _accumulated_results.append({"result_id": "a1", "model_id": "m1"})
+
+        assert delete_accumulated_result("missing") is False
+        assert len(get_accumulated_results()) == 1
+
     def test_reset_accumulated_results(self):
         _accumulated_results.append({"model_id": "m1", "benchmark": "mmlu", "accuracy": 0.5})
         reset_accumulated_results()
         assert len(get_accumulated_results()) == 0
+
+    def test_persist_and_reload_accumulated_result(self, tmp_path):
+        configure_accuracy_result_storage(tmp_path)
+        _append_accumulated_result({
+            "result_id": "a1",
+            "model_id": "m1",
+            "benchmark": "mmlu",
+            "accuracy": 0.5,
+        })
+
+        result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
+        assert len(result_files) == 1
+
+        configure_accuracy_result_storage(tmp_path)
+        results = get_accumulated_results()
+        assert len(results) == 1
+        assert results[0]["result_id"] == "a1"
+        assert results[0]["model_id"] == "m1"
+
+    def test_delete_accumulated_result_removes_file(self, tmp_path):
+        configure_accuracy_result_storage(tmp_path)
+        _append_accumulated_result({
+            "result_id": "a1",
+            "model_id": "m1",
+            "benchmark": "mmlu",
+            "accuracy": 0.5,
+        })
+        result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
+        assert len(result_files) == 1
+
+        assert delete_accumulated_result("a1") is True
+        assert get_accumulated_results() == []
+        assert not result_files[0].exists()
+
+    def test_reset_accumulated_results_removes_files(self, tmp_path):
+        configure_accuracy_result_storage(tmp_path)
+        _append_accumulated_result({"result_id": "a1", "model_id": "m1"})
+        _append_accumulated_result({"result_id": "b2", "model_id": "m2"})
+        result_dir = tmp_path / "benchmarks" / "accuracy" / "results"
+        (result_dir / "stale.json").write_text("{not json", encoding="utf-8")
+
+        reset_accumulated_results()
+
+        assert get_accumulated_results() == []
+        assert list(result_dir.glob("*.json")) == []
+
+    def test_invalid_result_file_is_skipped(self, tmp_path):
+        result_dir = tmp_path / "benchmarks" / "accuracy" / "results"
+        result_dir.mkdir(parents=True)
+        (result_dir / "bad.json").write_text("{not json", encoding="utf-8")
+        (result_dir / "good.json").write_text(
+            json.dumps({"result_id": "ok", "model_id": "m1"}),
+            encoding="utf-8",
+        )
+
+        configure_accuracy_result_storage(tmp_path)
+
+        results = get_accumulated_results()
+        assert len(results) == 1
+        assert results[0]["result_id"] == "ok"
 
 
 class TestRunLifecycle:
     def setup_method(self):
         from omlx.admin.accuracy_benchmark import _accuracy_runs
         _accuracy_runs.clear()
+        configure_accuracy_result_storage(None)
 
     def test_create_run(self):
         req = AccuracyBenchmarkRequest(
@@ -164,9 +245,14 @@ class TestRunLifecycle:
 
 
 class TestRunAccuracyBenchmark:
+    def setup_method(self):
+        configure_accuracy_result_storage(None)
+        reset_accumulated_results()
+
     @pytest.mark.asyncio
-    async def test_sends_done_event(self):
+    async def test_sends_done_event(self, tmp_path):
         """Verify that a successful run sends a done event."""
+        configure_accuracy_result_storage(tmp_path)
         req = AccuracyBenchmarkRequest(
             model_id="test-model",
             benchmarks={"mmlu": 100},
@@ -208,6 +294,11 @@ class TestRunAccuracyBenchmark:
 
         event_types = [e["type"] for e in events]
         assert "done" in event_types
+        result_event = next(e for e in events if e["type"] == "result")
+        assert result_event["data"]["batch_size"] == 1
+        assert result_event["data"]["result_id"]
+        result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
+        assert len(result_files) == 1
         assert run.status == "completed"
 
     @pytest.mark.asyncio

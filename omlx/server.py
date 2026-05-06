@@ -1497,6 +1497,9 @@ def init_server(
     stats_path = base_path / "stats.json"
     reset_server_metrics(stats_path=stats_path)
 
+    from .admin.accuracy_benchmark import configure_accuracy_result_storage
+    configure_accuracy_result_storage(base_path)
+
     logger.info(f"Server initialized with {_server_state.engine_pool.model_count} models")
     if _server_state.default_model:
         logger.info(f"Default model: {_server_state.default_model}")

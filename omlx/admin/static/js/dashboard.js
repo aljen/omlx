@@ -3108,6 +3108,18 @@
                 }
             },
 
+            async deleteAccResult(result) {
+                if (!result?.result_id) return;
+                try {
+                    const resp = await fetch(`/admin/api/bench/accuracy/results/${result.result_id}`, { method: 'DELETE' });
+                    if (!resp.ok) throw new Error('Delete failed');
+                    this.accAllResults = this.accAllResults.filter(r => r.result_id !== result.result_id);
+                } catch (err) {
+                    console.error('Delete result error:', err);
+                    this.accError = err.message || 'Failed to delete result';
+                }
+            },
+
             accBuildText() {
                 if (this.accAllResults.length === 0) return '';
                 const pad = (s, w) => s.toString().padStart(w);
@@ -3170,8 +3182,8 @@
                 for (const m of models) {
                     lines.push('');
                     lines.push('Model: ' + m);
-                    lines.push(rpad('Benchmark', 16) + pad('Accuracy', 10) + pad('Correct', 10) + pad('Total', 8) + pad('Time(s)', 10) + pad('Think', 8));
-                    lines.push('-'.repeat(62));
+                    lines.push(rpad('Benchmark', 16) + pad('Accuracy', 10) + pad('Correct', 10) + pad('Total', 8) + pad('Time(s)', 10) + pad('Batch', 8) + pad('Think', 8));
+                    lines.push('-'.repeat(70));
                     for (const r of this.accAllResults.filter(r => r.model_id === m)) {
                         lines.push(
                             rpad(r.benchmark.toUpperCase(), 16) +
@@ -3179,6 +3191,7 @@
                             pad(r.correct, 10) +
                             pad(r.total, 8) +
                             pad(r.time_s, 10) +
+                            pad((r.batch_size || 1) + 'x', 8) +
                             pad(r.thinking_used ? 'Yes' : 'No', 8)
                         );
                     }
@@ -3211,9 +3224,12 @@
 
                 if (format === 'json') {
                     content = JSON.stringify({
+                        result_id: r.result_id || null,
+                        created_at: r.created_at || null,
                         model_id: r.model_id,
                         benchmark: r.benchmark,
                         benchmark_variant: r.benchmark_variant || null,
+                        batch_size: r.batch_size || 1,
                         accuracy: r.accuracy,
                         correct: r.correct,
                         total: r.total,
@@ -3225,9 +3241,9 @@
                     mime = 'application/json';
                 } else if (format === 'csv') {
                     const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
-                    const lines = ['id,category,correct,pass_mode,failure_type,error,expected,predicted,question,raw_response,time_s'];
+                    const lines = ['result_id,batch_size,id,category,correct,pass_mode,failure_type,error,expected,predicted,question,raw_response,time_s'];
                     for (const q of qr) {
-                        lines.push([q.id, esc(q.category || ''), q.correct, esc(q.pass_mode || ''), esc(q.failure_type || ''), esc(q.error || ''), esc(q.expected), esc(q.predicted), esc(q.question), esc(q.raw_response), q.time_s].join(','));
+                        lines.push([esc(r.result_id || ''), r.batch_size || 1, q.id, esc(q.category || ''), q.correct, esc(q.pass_mode || ''), esc(q.failure_type || ''), esc(q.error || ''), esc(q.expected), esc(q.predicted), esc(q.question), esc(q.raw_response), q.time_s].join(','));
                     }
                     content = lines.join('\n');
                     mime = 'text/csv';
@@ -3235,7 +3251,9 @@
                     const lines = [
                         `Model: ${r.model_id}`,
                         `Benchmark: ${r.benchmark.toUpperCase()}`,
+                        r.created_at ? `Created: ${r.created_at}` : null,
                         r.benchmark_variant ? `Variant: ${r.benchmark_variant}` : null,
+                        `Batch: ${r.batch_size || 1}x`,
                         `Accuracy: ${(r.accuracy * 100).toFixed(1)}% (${r.correct}/${r.total})`,
                         `Time: ${r.time_s}s`,
                         '',

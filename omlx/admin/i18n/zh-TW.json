@@ -670,6 +670,7 @@
   "acc_bench.config.queue_label": "佇列",
   "acc_bench.results.section_label": "結果",
   "acc_bench.results.clear": "清除結果",
+  "acc_bench.results.delete_saved_tooltip": "刪除已儲存的結果",
   "acc_bench.results.download": "Download",
   "acc_bench.results.show_categories": "顯示分類詳情",
   "acc_bench.results.hide_categories": "隱藏分類詳情",
