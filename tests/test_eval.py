@@ -429,6 +429,34 @@ class TestMBPPDiagnostics:
         assert result.passed is False
         assert result.failure_type == "wrong_answer"
 
+    def test_tolerates_tiny_numeric_assert_drift(self):
+        from omlx.eval.mbpp import _run_with_tests
+        result = _run_with_tests(
+            "import math\n\ndef volume_cone(radius, height):\n    return (1/3) * math.pi * radius**2 * height",
+            ["assert volume_cone(19,17)==6426.651371693521"],
+        )
+        assert result.passed is True
+        assert result.pass_mode == "tolerant_numeric_asserts"
+
+    def test_setup_can_run_after_generated_code(self):
+        from omlx.eval.mbpp import _run_with_tests
+        code = (
+            "class Node:\n"
+            "    def __init__(self, value):\n"
+            "        self.value = value\n"
+            "        self.left = None\n"
+            "\n"
+            "def root_value(root):\n"
+            "    return root.value\n"
+        )
+        result = _run_with_tests(
+            code,
+            ["assert root_value(root) == 7"],
+            "root = Node(7)",
+        )
+        assert result.passed is True
+        assert result.pass_mode == "setup_after_code"
+
 
 class TestLiveCodeBenchDiagnostics:
     def test_variant_evaluator_reports_wrong_answer(self):
