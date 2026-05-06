@@ -28,6 +28,9 @@ class QuestionResult:
     question_text: str = ""
     raw_response: str = ""
     category: Optional[str] = None
+    pass_mode: Optional[str] = None
+    failure_type: Optional[str] = None
+    error: str = ""
 
 
 @dataclass
@@ -42,6 +45,7 @@ class BenchmarkResult:
     question_results: list[QuestionResult] = field(default_factory=list)
     category_scores: Optional[dict[str, float]] = None
     thinking_used: bool = False
+    benchmark_variant: Optional[str] = None
 
 
 class BaseBenchmark(ABC):
@@ -167,6 +171,8 @@ class BaseBenchmark(ABC):
     @staticmethod
     def _strip_think_tags(text: str) -> str:
         """Remove <think>...</think> blocks from model output."""
+        if "<think>" not in text:
+            return text
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     async def _eval_single(

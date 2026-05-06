@@ -3213,6 +3213,7 @@
                     content = JSON.stringify({
                         model_id: r.model_id,
                         benchmark: r.benchmark,
+                        benchmark_variant: r.benchmark_variant || null,
                         accuracy: r.accuracy,
                         correct: r.correct,
                         total: r.total,
@@ -3224,9 +3225,9 @@
                     mime = 'application/json';
                 } else if (format === 'csv') {
                     const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
-                    const lines = ['id,category,correct,expected,predicted,question,raw_response,time_s'];
+                    const lines = ['id,category,correct,pass_mode,failure_type,error,expected,predicted,question,raw_response,time_s'];
                     for (const q of qr) {
-                        lines.push([q.id, esc(q.category || ''), q.correct, esc(q.expected), esc(q.predicted), esc(q.question), esc(q.raw_response), q.time_s].join(','));
+                        lines.push([q.id, esc(q.category || ''), q.correct, esc(q.pass_mode || ''), esc(q.failure_type || ''), esc(q.error || ''), esc(q.expected), esc(q.predicted), esc(q.question), esc(q.raw_response), q.time_s].join(','));
                     }
                     content = lines.join('\n');
                     mime = 'text/csv';
@@ -3234,16 +3235,20 @@
                     const lines = [
                         `Model: ${r.model_id}`,
                         `Benchmark: ${r.benchmark.toUpperCase()}`,
+                        r.benchmark_variant ? `Variant: ${r.benchmark_variant}` : null,
                         `Accuracy: ${(r.accuracy * 100).toFixed(1)}% (${r.correct}/${r.total})`,
                         `Time: ${r.time_s}s`,
                         '',
-                    ];
+                    ].filter(x => x !== null);
                     for (const q of qr) {
                         lines.push(`--- Q${q.id} [${q.correct ? 'CORRECT' : 'WRONG'}] ---`);
                         if (q.category) lines.push(`Category: ${q.category}`);
                         lines.push(`Question: ${q.question || ''}`);
                         lines.push(`Expected: ${q.expected}`);
                         lines.push(`Predicted: ${q.predicted}`);
+                        if (q.pass_mode) lines.push(`Pass mode: ${q.pass_mode}`);
+                        if (q.failure_type) lines.push(`Failure: ${q.failure_type}`);
+                        if (q.error) lines.push(`Error: ${q.error}`);
                         lines.push(`Raw response: ${q.raw_response || '(empty)'}`);
                         lines.push(`Time: ${q.time_s}s`);
                         lines.push('');

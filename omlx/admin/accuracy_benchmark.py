@@ -463,6 +463,7 @@ async def run_accuracy_benchmark(
             result_data = {
                 "model_id": request.model_id,
                 "benchmark": result.benchmark_name,
+                "benchmark_variant": result.benchmark_variant,
                 "accuracy": round(result.accuracy, 4),
                 "thinking_used": result.thinking_used,
                 "total": result.total_questions,
@@ -477,6 +478,9 @@ async def run_accuracy_benchmark(
                         "question": qr.question_text,
                         "raw_response": qr.raw_response,
                         "category": qr.category,
+                        "pass_mode": qr.pass_mode,
+                        "failure_type": qr.failure_type,
+                        "error": qr.error,
                         "time_s": round(qr.time_seconds, 3),
                     }
                     for qr in result.question_results

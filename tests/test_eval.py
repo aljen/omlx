@@ -253,6 +253,96 @@ class TestHumanEval:
         passed, error = _execute_with_tests(code, test, "add")
         assert passed is False
 
+    def test_body_only_without_indent_passes_after_repair(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": "def add(a, b):\n    \"\"\"Add two numbers.\"\"\"\n",
+            "test": "def check(candidate):\n    assert candidate(1, 2) == 3",
+            "entry_point": "add",
+        }
+        result = HumanEvalBenchmark().evaluate_response("return a + b", item)
+        assert result.passed is True
+        assert result.pass_mode == "canonical_indented"
+
+    def test_body_only_with_indent_passes_canonical_raw(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": "def add(a, b):\n    \"\"\"Add two numbers.\"\"\"\n",
+            "test": "def check(candidate):\n    assert candidate(1, 2) == 3",
+            "entry_point": "add",
+        }
+        result = HumanEvalBenchmark().evaluate_response("    return a + b", item)
+        assert result.passed is True
+        assert result.pass_mode == "canonical_raw"
+
+    def test_partially_stripped_body_indent_passes(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": (
+                "def has_close_elements(numbers, threshold):\n"
+                "    \"\"\"Check close elements.\"\"\"\n"
+            ),
+            "test": (
+                "def check(candidate):\n"
+                "    assert candidate([1.0, 2.8, 3.0], 0.3) is True\n"
+                "    assert candidate([1.0, 2.0, 3.0], 0.5) is False"
+            ),
+            "entry_point": "has_close_elements",
+        }
+        response = (
+            "for i in range(len(numbers)):\n"
+            "        for j in range(i + 1, len(numbers)):\n"
+            "            if abs(numbers[i] - numbers[j]) < threshold:\n"
+            "                return True\n"
+            "    return False"
+        )
+        result = HumanEvalBenchmark().evaluate_response(response, item)
+        assert result.passed is True
+        assert result.pass_mode == "canonical_top_level_indent"
+
+    def test_full_function_response_gets_prompt_imports(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": "from typing import List\n\n\ndef first(xs: List[int]) -> int:\n    \"\"\"Return first.\"\"\"\n",
+            "test": "def check(candidate):\n    assert candidate([3, 4]) == 3",
+            "entry_point": "first",
+        }
+        response = "def first(xs: List[int]) -> int:\n    return xs[0]"
+        result = HumanEvalBenchmark().evaluate_response(response, item)
+        assert result.passed is True
+        assert result.pass_mode == "standalone_function"
+
+    def test_syntax_error_is_categorized(self):
+        from omlx.eval.humaneval import HumanEvalBenchmark
+        item = {
+            "prompt": "def add(a, b):\n    \"\"\"Add two numbers.\"\"\"\n",
+            "test": "def check(candidate):\n    assert candidate(1, 2) == 3",
+            "entry_point": "add",
+        }
+        result = HumanEvalBenchmark().evaluate_response("return a +", item)
+        assert result.passed is False
+        assert result.failure_type in {"syntax_error", "indentation_error"}
+
+
+class TestMBPPDiagnostics:
+    def test_failing_assertion_reports_wrong_answer(self):
+        from omlx.eval.mbpp import _run_with_tests
+        result = _run_with_tests(
+            "def add(a, b):\n    return a - b",
+            ["assert add(1, 2) == 3"],
+        )
+        assert result.passed is False
+        assert result.failure_type == "wrong_answer"
+
+
+class TestLiveCodeBenchDiagnostics:
+    def test_variant_evaluator_reports_wrong_answer(self):
+        from omlx.eval.livecodebench import LiveCodeBenchBenchmark
+        item = {"inputs": [""], "outputs": ["42"]}
+        result = LiveCodeBenchBenchmark().evaluate_code("print(41)", item)
+        assert result.passed is False
+        assert result.failure_type == "wrong_answer"
+
 
 # --- Think Tag Stripping Tests ---
 

@@ -191,6 +191,8 @@ class TestRunAccuracyBenchmark:
         mock_result.time_seconds = 1.0
         mock_result.category_scores = None
         mock_result.thinking_used = False
+        mock_result.benchmark_variant = None
+        mock_result.question_results = []
 
         mock_evaluator = MagicMock()
         mock_evaluator.load_dataset = AsyncMock(return_value=[{"id": "1"}])

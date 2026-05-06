@@ -10,6 +10,7 @@ machine. Mitigations: subprocess with timeout, memory limits, temp file cleanup.
 """
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import os
 import re
@@ -29,6 +30,13 @@ DATA_DIR = Path(__file__).parent / "data"
 
 EXEC_TIMEOUT_SECONDS = 15
 EXEC_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
+
+
+@dataclass
+class CodeCheckResult:
+    passed: bool
+    failure_type: str = ""
+    error: str = ""
 
 
 def _extract_code(response: str) -> str:
@@ -70,6 +78,22 @@ def _set_resource_limits():
         pass
 
 
+def _classify_error(error: str) -> str:
+    if not error:
+        return "wrong_answer"
+    if "IndentationError" in error:
+        return "indentation_error"
+    if "SyntaxError" in error:
+        return "syntax_error"
+    if "NameError" in error and "is not defined" in error:
+        return "missing_entry_point"
+    if "AssertionError" in error:
+        return "wrong_answer"
+    if "timed out" in error.lower():
+        return "timeout"
+    return "runtime_error"
+
+
 def _execute_with_tests(code: str, test_list: list[str], setup_code: str = "") -> tuple[bool, str]:
     """Execute generated code with assertion-based test cases."""
     test_code = "\n".join(test_list)
@@ -105,6 +129,17 @@ def _execute_with_tests(code: str, test_list: list[str], setup_code: str = "") -
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+def _run_with_tests(code: str, test_list: list[str], setup_code: str = "") -> CodeCheckResult:
+    passed, error = _execute_with_tests(code, test_list, setup_code)
+    if passed:
+        return CodeCheckResult(passed=True, failure_type="passed")
+    return CodeCheckResult(
+        passed=False,
+        failure_type=_classify_error(error),
+        error=error,
+    )
 
 
 class MBPPBenchmark(BaseBenchmark):
@@ -197,7 +232,12 @@ class MBPPBenchmark(BaseBenchmark):
 
             for idx, item, response_text, prompt_text, _raw in sorted(gen_results, key=lambda x: x[0]):
                 code = self.extract_answer(response_text, item)
-                is_correct = self.check_answer(code, item)
+                check = _run_with_tests(
+                    code,
+                    item["test_list"],
+                    item.get("test_setup_code", ""),
+                )
+                is_correct = check.passed
 
                 if is_correct:
                     correct += 1
@@ -212,6 +252,9 @@ class MBPPBenchmark(BaseBenchmark):
                         question_text=prompt_text,
                         raw_response=response_text,
                         category=self.get_category(item),
+                        pass_mode="standalone_code" if is_correct else None,
+                        failure_type=check.failure_type,
+                        error=check.error,
                     )
                 )
 

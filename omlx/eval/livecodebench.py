@@ -11,6 +11,7 @@ module, temp file cleanup. Users are warned in the UI before running.
 """
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -32,6 +33,13 @@ DATA_DIR = Path(__file__).parent / "data"
 # Execution limits
 EXEC_TIMEOUT_SECONDS = 30
 EXEC_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024  # 256 MB
+
+
+@dataclass
+class CodeCheckResult:
+    passed: bool
+    failure_type: str = ""
+    error: str = ""
 
 
 def _extract_code(response: str) -> str:
@@ -76,6 +84,18 @@ def _set_resource_limits():
         resource.setrlimit(resource.RLIMIT_CPU, (EXEC_TIMEOUT_SECONDS + 5, EXEC_TIMEOUT_SECONDS + 5))
     except (ValueError, resource.error):
         pass
+
+
+def _classify_error(error: str) -> str:
+    if not error:
+        return "wrong_answer"
+    if "IndentationError" in error:
+        return "indentation_error"
+    if "SyntaxError" in error:
+        return "syntax_error"
+    if "timed out" in error.lower():
+        return "timeout"
+    return "runtime_error"
 
 
 def _execute_code(code: str, stdin_input: str = "") -> tuple[str, bool, str]:
@@ -210,6 +230,36 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
 
         return True
 
+    def evaluate_code(self, predicted: str, item: dict) -> CodeCheckResult:
+        """Execute code against the current fast local public-test subset."""
+        if not predicted.strip():
+            return CodeCheckResult(passed=False, failure_type="syntax_error")
+
+        inputs = item["inputs"][:3]
+        outputs = item["outputs"][:3]
+
+        for inp, expected_out in zip(inputs, outputs):
+            stdin_input = inp if isinstance(inp, str) else str(inp)
+            expected = expected_out.strip() if isinstance(expected_out, str) else str(expected_out).strip()
+
+            stdout, success, error = _execute_code(predicted, stdin_input)
+            if not success:
+                return CodeCheckResult(
+                    passed=False,
+                    failure_type=_classify_error(error),
+                    error=error,
+                )
+
+            actual = stdout.strip()
+            if actual != expected:
+                return CodeCheckResult(
+                    passed=False,
+                    failure_type="wrong_answer",
+                    error=f"Expected {expected!r}, got {actual!r}",
+                )
+
+        return CodeCheckResult(passed=True, failure_type="passed")
+
     async def run(
         self,
         engine: Any,
@@ -241,7 +291,8 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
             # Code execution is sequential (subprocess safety)
             for idx, item, response_text, prompt_text, _raw in sorted(gen_results, key=lambda x: x[0]):
                 code = self.extract_answer(response_text, item)
-                is_correct = self.check_answer(code, item)
+                check = self.evaluate_code(code, item)
+                is_correct = check.passed
 
                 if is_correct:
                     correct += 1
@@ -256,6 +307,9 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
                         question_text=prompt_text,
                         raw_response=response_text,
                         category=self.get_category(item),
+                        pass_mode="livecodebench_lite_public3" if is_correct else None,
+                        failure_type=check.failure_type,
+                        error=check.error,
                     )
                 )
 
@@ -274,4 +328,5 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
             time_seconds=total_time,
             question_results=results,
             thinking_used=enable_thinking,
+            benchmark_variant="livecodebench_lite_public3",
         )

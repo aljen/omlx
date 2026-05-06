@@ -11,6 +11,7 @@ machine. Mitigations: subprocess with timeout, memory limits, temp file cleanup.
 """
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ import re
 import resource
 import subprocess
 import tempfile
+import textwrap
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -31,6 +33,15 @@ DATA_DIR = Path(__file__).parent / "data"
 
 EXEC_TIMEOUT_SECONDS = 15
 EXEC_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024  # 256 MB
+
+
+@dataclass
+class CodeCheckResult:
+    passed: bool
+    failure_type: str = ""
+    error: str = ""
+    pass_mode: str = ""
+    code: str = ""
 
 
 def _get_imports(prompt: str) -> str:
@@ -84,6 +95,70 @@ def _extract_code(response: str, prompt: str) -> str:
 
     # Response is just the function body — combine with prompt
     return prompt + response
+
+
+def _classify_error(error: str) -> str:
+    if not error:
+        return "wrong_answer"
+    if "IndentationError" in error:
+        return "indentation_error"
+    if "SyntaxError" in error:
+        return "syntax_error"
+    if "NameError" in error and "is not defined" in error:
+        return "missing_entry_point"
+    if "AssertionError" in error:
+        return "wrong_answer"
+    if "timed out" in error.lower():
+        return "timeout"
+    return "runtime_error"
+
+
+def _has_imports(code: str) -> bool:
+    return any(
+        line.strip().startswith(("import ", "from "))
+        for line in code.split("\n")
+    )
+
+
+def _prepend_imports_if_needed(code: str, prompt: str) -> str:
+    imports = _get_imports(prompt)
+    if imports and "def " in code and not _has_imports(code):
+        return imports + "\n\n" + code
+    return code
+
+
+def _extract_response_code(response: str) -> str:
+    """Extract code while preserving body indentation where possible."""
+    response = response.strip("\n")
+    blocks = re.findall(r"```python\s*\n(.*?)```", response, re.DOTALL)
+    if blocks:
+        return blocks[-1].strip("\n")
+    blocks = re.findall(r"```\s*\n(.*?)```", response, re.DOTALL)
+    if blocks:
+        return blocks[-1].strip("\n")
+    return response
+
+
+def _indent_body_if_needed(body: str) -> str:
+    """Indent body-only HumanEval completions that arrived as top-level code."""
+    body = body.strip("\n")
+    lines = body.split("\n")
+    first_code = next((line for line in lines if line.strip()), "")
+    if not first_code or first_code[:1].isspace():
+        return body
+    return textwrap.indent(body, "    ")
+
+
+def _indent_top_level_lines(body: str) -> str:
+    """Repair completions where only top-level body lines lost indentation."""
+    body = body.strip("\n")
+    fixed = []
+    for line in body.split("\n"):
+        if line.strip() and not line[:1].isspace():
+            fixed.append("    " + line)
+        else:
+            fixed.append(line)
+    return "\n".join(fixed)
 
 
 def _set_resource_limits():
@@ -145,6 +220,45 @@ check({entry_point})
             pass
 
 
+def _run_with_tests(code: str, test_code: str, entry_point: str) -> CodeCheckResult:
+    passed, error = _execute_with_tests(code, test_code, entry_point)
+    if passed:
+        return CodeCheckResult(passed=True, failure_type="passed", code=code)
+    return CodeCheckResult(
+        passed=False,
+        failure_type=_classify_error(error),
+        error=error,
+        code=code,
+    )
+
+
+def _candidate_codes(response: str, prompt: str) -> list[tuple[str, str]]:
+    """Build deterministic HumanEval candidates from canonical and chat output."""
+    extracted = _extract_response_code(response)
+    candidates: list[tuple[str, str]] = [
+        ("canonical_raw", prompt + response),
+    ]
+
+    if extracted != response:
+        candidates.append(("canonical_extracted", prompt + extracted))
+
+    if "def " in extracted:
+        candidates.append(
+            ("standalone_function", _prepend_imports_if_needed(extracted, prompt))
+        )
+    else:
+        candidates.append(("canonical_indented", prompt + _indent_body_if_needed(extracted)))
+        candidates.append(("canonical_top_level_indent", prompt + _indent_top_level_lines(extracted)))
+
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
+    for mode, code in candidates:
+        if code not in seen:
+            seen.add(code)
+            unique.append((mode, code))
+    return unique
+
+
 class HumanEvalBenchmark(BaseBenchmark):
     """HumanEval: function completion with unit test verification."""
 
@@ -180,27 +294,15 @@ class HumanEvalBenchmark(BaseBenchmark):
         prompt = item["prompt"]
         content = (
             "Complete the following Python function. "
-            "Provide only the complete function implementation, no explanations.\n\n"
+            "Return only the missing indented function body, no explanations.\n\n"
             f"{prompt}"
         )
         return [{"role": "user", "content": content}]
 
     def extract_answer(self, response: str, item: dict) -> str:
         """Extract the complete function from model response."""
-        # Use last code block to avoid picking drafts/examples
-        code = self._extract_last_code_block(response)
-        imports = _get_imports(item["prompt"])
-
-        # If extracted code has function def but no imports, prepend from prompt
-        if "def " in code and imports:
-            if not any(line.strip().startswith(("import ", "from ")) for line in code.split("\n")):
-                return imports + "\n\n" + code
-
-        # If no function def found, combine prompt + response body
-        if "def " not in code:
-            return item["prompt"] + code
-
-        return code
+        result = self.evaluate_response(response, item)
+        return result.code
 
     def check_answer(self, predicted: str, item: dict) -> bool:
         """Execute the generated code with test cases."""
@@ -211,6 +313,26 @@ class HumanEvalBenchmark(BaseBenchmark):
             predicted, item["test"], item["entry_point"]
         )
         return passed
+
+    def evaluate_response(self, response: str, item: dict) -> CodeCheckResult:
+        """Try canonical HumanEval completion plus deterministic chat repairs."""
+        best_failure: CodeCheckResult | None = None
+        for mode, code in _candidate_codes(response, item["prompt"]):
+            result = _run_with_tests(code, item["test"], item["entry_point"])
+            result.pass_mode = mode
+            if result.passed:
+                return result
+            if best_failure is None or (
+                best_failure.failure_type in ("syntax_error", "indentation_error")
+                and result.failure_type not in ("syntax_error", "indentation_error")
+            ):
+                best_failure = result
+
+        return best_failure or CodeCheckResult(
+            passed=False,
+            failure_type="runtime_error",
+            error="No candidate code produced",
+        )
 
     async def run(
         self,
@@ -240,8 +362,9 @@ class HumanEvalBenchmark(BaseBenchmark):
             gen_elapsed = time.time() - batch_time
 
             for idx, item, response_text, prompt_text, _raw in sorted(gen_results, key=lambda x: x[0]):
-                code = self.extract_answer(response_text, item)
-                is_correct = self.check_answer(code, item)
+                check = self.evaluate_response(response_text, item)
+                code = check.code
+                is_correct = check.passed
 
                 if is_correct:
                     correct += 1
@@ -256,6 +379,9 @@ class HumanEvalBenchmark(BaseBenchmark):
                         question_text=prompt_text,
                         raw_response=response_text,
                         category=self.get_category(item),
+                        pass_mode=check.pass_mode,
+                        failure_type=check.failure_type,
+                        error=check.error,
                     )
                 )
 
