@@ -452,6 +452,7 @@
             ],
             accBatchSize: 1,
             accEnableThinking: false,
+            accSamplingProfile: 'model_settings',
             accRunning: false,
             accCurrentModel: '',
             accCurrentBenchId: null,
@@ -968,6 +969,14 @@
                 const pp = summary.pp_tps ? summary.pp_tps.toFixed(1) : '-';
                 const tg = summary.tg_tps ? summary.tg_tps.toFixed(1) : '-';
                 return `pp ${pp} / tg ${tg}`;
+            },
+
+            modelAccuracyLabel(model) {
+                const summary = model?.catalog?.best_accuracy_summary || {};
+                if (!summary.benchmark || summary.accuracy == null) return '';
+                const pct = (summary.accuracy * 100).toFixed(1);
+                const thinking = summary.thinking_used ? ' think' : '';
+                return `${summary.benchmark.toUpperCase()} ${pct}%${thinking}`;
             },
 
             async checkModelUpdate(model) {
@@ -3028,6 +3037,7 @@
                             ),
                             batch_size: this.accBatchSize,
                             enable_thinking: this.accEnableThinking,
+                            sampling_profile: this.accSamplingProfile,
                         }),
                     });
                     if (!resp.ok) {
@@ -3310,6 +3320,8 @@
                         benchmark: r.benchmark,
                         benchmark_variant: r.benchmark_variant || null,
                         batch_size: r.batch_size || 1,
+                        sampling_profile: r.sampling_profile || 'deterministic',
+                        effective_sampling: r.effective_sampling || null,
                         accuracy: r.accuracy,
                         correct: r.correct,
                         total: r.total,
@@ -3321,9 +3333,9 @@
                     mime = 'application/json';
                 } else if (format === 'csv') {
                     const esc = s => '"' + (s || '').replace(/"/g, '""') + '"';
-                    const lines = ['result_id,batch_size,id,category,correct,pass_mode,failure_type,error,expected,predicted,question,raw_response,time_s'];
+                    const lines = ['result_id,batch_size,sampling_profile,temperature,id,category,correct,pass_mode,failure_type,error,expected,predicted,question,raw_response,time_s'];
                     for (const q of qr) {
-                        lines.push([esc(r.result_id || ''), r.batch_size || 1, q.id, esc(q.category || ''), q.correct, esc(q.pass_mode || ''), esc(q.failure_type || ''), esc(q.error || ''), esc(q.expected), esc(q.predicted), esc(q.question), esc(q.raw_response), q.time_s].join(','));
+                        lines.push([esc(r.result_id || ''), r.batch_size || 1, esc(r.sampling_profile || ''), r.effective_sampling?.temperature ?? '', q.id, esc(q.category || ''), q.correct, esc(q.pass_mode || ''), esc(q.failure_type || ''), esc(q.error || ''), esc(q.expected), esc(q.predicted), esc(q.question), esc(q.raw_response), q.time_s].join(','));
                     }
                     content = lines.join('\n');
                     mime = 'text/csv';
@@ -3334,6 +3346,8 @@
                         r.created_at ? `Created: ${r.created_at}` : null,
                         r.benchmark_variant ? `Variant: ${r.benchmark_variant}` : null,
                         `Batch: ${r.batch_size || 1}x`,
+                        `Sampling: ${r.sampling_profile || 'deterministic'}`,
+                        r.effective_sampling ? `Temperature: ${r.effective_sampling.temperature}` : null,
                         `Accuracy: ${(r.accuracy * 100).toFixed(1)}% (${r.correct}/${r.total})`,
                         `Time: ${r.time_s}s`,
                         '',

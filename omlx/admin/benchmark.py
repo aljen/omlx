@@ -202,6 +202,12 @@ def _build_perf_result(run: BenchmarkRun) -> dict:
         "run_signature": _run_signature(run),
         "single_results": [r for r in run.results if r.get("test_type") == "single"],
         "batch_results": [r for r in run.results if r.get("test_type") == "batch"],
+        "effective_sampling": {
+            "sampling_profile": "deterministic",
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "generation_length": run.request.generation_length,
+        },
         "experimental_features": list(run.experimental_features),
         "upload_requested": run.request.upload_to_omlx,
         "upload_state": dict(run.upload_state),

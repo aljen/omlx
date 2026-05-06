@@ -40,6 +40,9 @@ class ModelCatalogEntry:
     removed: bool = False
     last_perf_result_id: str = ""
     best_perf_summary: dict[str, Any] = field(default_factory=dict)
+    last_accuracy_result_id: str = ""
+    best_accuracy_summary: dict[str, Any] = field(default_factory=dict)
+    accuracy_summaries_by_benchmark: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelCatalogEntry":
@@ -203,4 +206,25 @@ class ModelCatalog:
                 self._entries[model_id] = entry
             entry.last_perf_result_id = result_id
             entry.best_perf_summary = summary
+            self._save_locked()
+
+    def replace_accuracy_summaries(self, summaries_by_model: dict[str, dict[str, Any]]) -> None:
+        """Replace catalog accuracy summaries with a recomputed snapshot."""
+        with self._lock:
+            for entry in self._entries.values():
+                entry.last_accuracy_result_id = ""
+                entry.best_accuracy_summary = {}
+                entry.accuracy_summaries_by_benchmark = {}
+
+            for model_id, summary in summaries_by_model.items():
+                entry = self._entries.get(model_id)
+                if entry is None:
+                    entry = ModelCatalogEntry(model_id=model_id, path="", source="unknown")
+                    self._entries[model_id] = entry
+                entry.last_accuracy_result_id = summary.get("last_accuracy_result_id", "")
+                entry.best_accuracy_summary = dict(summary.get("best_accuracy_summary") or {})
+                entry.accuracy_summaries_by_benchmark = dict(
+                    summary.get("accuracy_summaries_by_benchmark") or {}
+                )
+
             self._save_locked()

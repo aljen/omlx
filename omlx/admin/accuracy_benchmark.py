@@ -29,6 +29,7 @@ _accuracy_runs: dict[str, "AccuracyBenchmarkRun"] = {}
 _accumulated_results: list[dict] = []
 _result_storage_dir: Optional[Path] = None
 _result_paths: dict[str, Path] = {}
+_model_catalog_ref: Any = None
 
 # Server-side queue
 _queue: list["AccuracyBenchmarkRequest"] = []
@@ -43,6 +44,7 @@ VALID_BENCHMARKS = [
     "gsm8k", "mathqa", "humaneval", "mbpp", "livecodebench",
     "bbq", "safetybench",
 ]
+VALID_SAMPLING_PROFILES = ("model_settings", "deterministic")
 
 
 class AccuracyBenchmarkRequest(BaseModel):
@@ -52,12 +54,22 @@ class AccuracyBenchmarkRequest(BaseModel):
     benchmarks: dict[str, int]  # name -> sample_size (0 = full dataset)
     batch_size: int = 1
     enable_thinking: bool = False
+    sampling_profile: str = "model_settings"
 
     @field_validator("batch_size")
     @classmethod
     def validate_batch_size(cls, v: int) -> int:
         if v not in (1, 2, 4, 8, 16, 32):
             raise ValueError("batch_size must be 1, 2, 4, 8, 16, or 32")
+        return v
+
+    @field_validator("sampling_profile")
+    @classmethod
+    def validate_sampling_profile(cls, v: str) -> str:
+        if v not in VALID_SAMPLING_PROFILES:
+            raise ValueError(
+                f"sampling_profile must be one of {VALID_SAMPLING_PROFILES}"
+            )
         return v
 
     @field_validator("benchmarks")
@@ -139,19 +151,25 @@ def cleanup_old_runs() -> None:
 # --- Accumulated results ---
 
 
-def configure_accuracy_result_storage(base_path: Optional[Path]) -> None:
+def configure_accuracy_result_storage(
+    base_path: Optional[Path],
+    model_catalog: Any = None,
+) -> None:
     """Configure persisted accuracy result storage and load saved history."""
-    global _result_storage_dir
+    global _result_storage_dir, _model_catalog_ref
 
     _accumulated_results.clear()
     _result_paths.clear()
+    _model_catalog_ref = model_catalog
 
     if base_path is None:
         _result_storage_dir = None
+        _rebuild_accuracy_catalog_summaries()
         return
 
     _result_storage_dir = Path(base_path) / "benchmarks" / "accuracy" / "results"
     _load_accumulated_results()
+    _rebuild_accuracy_catalog_summaries()
 
 
 def _load_accumulated_results() -> None:
@@ -229,6 +247,7 @@ def delete_accumulated_result(result_id: str) -> bool:
                     path.unlink(missing_ok=True)
                 except OSError as e:
                     logger.warning(f"Failed to delete accuracy result {path}: {e}")
+            _rebuild_accuracy_catalog_summaries()
             return True
     return False
 
@@ -246,12 +265,169 @@ def reset_accumulated_results() -> None:
             except OSError as e:
                 logger.warning(f"Failed to delete accuracy result {path}: {e}")
     _result_paths.clear()
+    _rebuild_accuracy_catalog_summaries()
 
 
 def _append_accumulated_result(result: dict) -> None:
     """Append and persist one completed benchmark result."""
+    result.setdefault(
+        "created_at",
+        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
     _accumulated_results.append(result)
     _save_accumulated_result(result)
+    _rebuild_accuracy_catalog_summaries()
+
+
+def _result_created_at(result: dict) -> str:
+    return str(result.get("created_at") or "")
+
+
+def _accuracy_result_summary(result: dict) -> dict[str, Any]:
+    return {
+        "result_id": result.get("result_id", ""),
+        "created_at": result.get("created_at", ""),
+        "benchmark": result.get("benchmark", ""),
+        "benchmark_variant": result.get("benchmark_variant"),
+        "accuracy": result.get("accuracy", 0),
+        "correct": result.get("correct", 0),
+        "total": result.get("total", 0),
+        "thinking_used": bool(result.get("thinking_used", False)),
+        "batch_size": result.get("batch_size", 1),
+        "sampling_profile": result.get("sampling_profile", "deterministic"),
+        "temperature": (result.get("effective_sampling") or {}).get("temperature"),
+    }
+
+
+def _build_accuracy_catalog_snapshot(results: list[dict]) -> dict[str, dict[str, Any]]:
+    by_model: dict[str, list[dict]] = {}
+    for result in results:
+        model_id = result.get("model_id")
+        if model_id:
+            by_model.setdefault(model_id, []).append(result)
+
+    snapshot: dict[str, dict[str, Any]] = {}
+    for model_id, model_results in by_model.items():
+        latest = model_results[-1]
+        best = max(
+            model_results,
+            key=lambda r: (float(r.get("accuracy") or 0), _result_created_at(r)),
+        )
+        by_benchmark: dict[str, dict[str, Any]] = {}
+        for result in model_results:
+            benchmark = result.get("benchmark")
+            if not benchmark:
+                continue
+            existing = by_benchmark.get(benchmark)
+            if existing is None or (
+                float(result.get("accuracy") or 0),
+                _result_created_at(result),
+            ) > (
+                float(existing.get("accuracy") or 0),
+                str(existing.get("created_at") or ""),
+            ):
+                by_benchmark[benchmark] = _accuracy_result_summary(result)
+
+        snapshot[model_id] = {
+            "last_accuracy_result_id": latest.get("result_id", ""),
+            "best_accuracy_summary": _accuracy_result_summary(best),
+            "accuracy_summaries_by_benchmark": by_benchmark,
+        }
+    return snapshot
+
+
+def _rebuild_accuracy_catalog_summaries() -> None:
+    if _model_catalog_ref is None:
+        return
+    try:
+        _model_catalog_ref.replace_accuracy_summaries(
+            _build_accuracy_catalog_snapshot(_accumulated_results)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update accuracy catalog summaries: {e}")
+
+
+def _global_sampling_defaults() -> dict[str, Any]:
+    try:
+        from ..server import _server_state
+
+        sampling = getattr(_server_state, "sampling", None)
+    except Exception:
+        sampling = None
+
+    return {
+        "temperature": getattr(sampling, "temperature", 1.0),
+        "top_p": getattr(sampling, "top_p", 0.95),
+        "top_k": getattr(sampling, "top_k", 0),
+        "min_p": 0.0,
+        "repetition_penalty": getattr(sampling, "repetition_penalty", 1.0),
+        "presence_penalty": 0.0,
+    }
+
+
+def _get_model_settings(engine_pool: Any, model_id: str) -> Any:
+    settings_manager = getattr(engine_pool, "_settings_manager", None)
+    if settings_manager is None:
+        return None
+    try:
+        return settings_manager.get_settings(model_id)
+    except Exception as e:
+        logger.warning(f"Failed to load model settings for {model_id}: {e}")
+        return None
+
+
+def _build_sampling_kwargs(
+    engine_pool: Any,
+    request: AccuracyBenchmarkRequest,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build request kwargs and serializable effective sampling metadata."""
+    if request.sampling_profile == "deterministic":
+        effective = {
+            "sampling_profile": "deterministic",
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "min_p": 0.0,
+            "repetition_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "chat_template_kwargs": {},
+        }
+    else:
+        effective = _global_sampling_defaults()
+        effective["sampling_profile"] = "model_settings"
+        ms = _get_model_settings(engine_pool, request.model_id)
+        if ms is not None:
+            for key in (
+                "temperature",
+                "top_p",
+                "top_k",
+                "min_p",
+                "repetition_penalty",
+                "presence_penalty",
+            ):
+                value = getattr(ms, key, None)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    effective[key] = value
+            ct_kwargs = getattr(ms, "chat_template_kwargs", None)
+            effective["chat_template_kwargs"] = (
+                dict(ct_kwargs) if isinstance(ct_kwargs, dict) else {}
+            )
+        else:
+            effective["chat_template_kwargs"] = {}
+
+    effective["enable_thinking"] = request.enable_thinking
+    effective["batch_size"] = request.batch_size
+
+    kwargs = {
+        "temperature": effective["temperature"],
+        "top_p": effective["top_p"],
+        "top_k": effective["top_k"],
+        "min_p": effective["min_p"],
+        "repetition_penalty": effective["repetition_penalty"],
+        "presence_penalty": effective["presence_penalty"],
+        "chat_template_kwargs": dict(effective.get("chat_template_kwargs") or {}),
+    }
+    return kwargs, effective
 
 
 # --- Queue management ---
@@ -287,6 +463,7 @@ def get_queue_status() -> dict:
                 "benchmarks": list(r.benchmarks.keys()),
                 "batch_size": r.batch_size,
                 "enable_thinking": r.enable_thinking,
+                "sampling_profile": r.sampling_profile,
             }
             for r in _queue
         ],
@@ -466,22 +643,11 @@ async def run_accuracy_benchmark(
         # don't need VLM and the VLM adapter can produce empty responses.
         engine = await engine_pool.get_engine(request.model_id, force_lm=True)
 
-        # Load model sampling settings
-        sampling_kwargs = {}
-        if engine_pool._settings_manager is not None:
-            ms = engine_pool._settings_manager.get_settings(request.model_id)
-            if ms.top_p is not None:
-                sampling_kwargs["top_p"] = ms.top_p
-            if ms.top_k is not None:
-                sampling_kwargs["top_k"] = ms.top_k
-            if ms.min_p is not None:
-                sampling_kwargs["min_p"] = ms.min_p
-            if ms.repetition_penalty is not None:
-                sampling_kwargs["repetition_penalty"] = ms.repetition_penalty
-            if ms.presence_penalty is not None:
-                sampling_kwargs["presence_penalty"] = ms.presence_penalty
-            if ms.chat_template_kwargs:
-                sampling_kwargs["chat_template_kwargs"] = ms.chat_template_kwargs
+        # Load benchmark sampling profile once per run. Individual evaluators
+        # still own answer budgets via resolve_max_tokens().
+        sampling_kwargs, effective_sampling_base = _build_sampling_kwargs(
+            engine_pool, request
+        )
 
         # Phase 3: Run each benchmark
         run.phase = "evaluating"
@@ -551,6 +717,10 @@ async def run_accuracy_benchmark(
             })
 
             try:
+                effective_sampling = dict(effective_sampling_base)
+                effective_sampling["max_tokens"] = evaluator.resolve_max_tokens(
+                    engine, request.enable_thinking
+                )
                 result = await evaluator.run(
                     engine, items, on_progress,
                     batch_size=request.batch_size,
@@ -575,12 +745,18 @@ async def run_accuracy_benchmark(
                 return
 
             # Build result
+            effective_sampling["enable_thinking"] = result.thinking_used
+            effective_sampling["max_tokens"] = evaluator.resolve_max_tokens(
+                engine, result.thinking_used
+            )
             result_data = {
                 "result_id": str(uuid.uuid4())[:8],
                 "model_id": request.model_id,
                 "benchmark": result.benchmark_name,
                 "benchmark_variant": result.benchmark_variant,
                 "batch_size": request.batch_size,
+                "sampling_profile": request.sampling_profile,
+                "effective_sampling": effective_sampling,
                 "accuracy": round(result.accuracy, 4),
                 "thinking_used": result.thinking_used,
                 "total": result.total_questions,

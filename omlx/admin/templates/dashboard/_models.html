@@ -110,6 +110,9 @@
                                             <span x-show="modelPerfLabel(model)" x-cloak
                                                   class="text-xs text-neutral-500 flex-shrink-0"
                                                   x-text="modelPerfLabel(model)"></span>
+                                            <span x-show="modelAccuracyLabel(model)" x-cloak
+                                                  class="text-xs text-green-600 flex-shrink-0"
+                                                  x-text="modelAccuracyLabel(model)"></span>
                                             <a x-show="model.catalog?.repo_id" x-cloak
                                                :href="model.catalog?.source === 'hf' ? 'https://huggingface.co/' + model.catalog.repo_id : 'https://modelscope.cn/models/' + model.catalog.repo_id"
                                                target="_blank"

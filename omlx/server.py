@@ -1505,7 +1505,7 @@ def init_server(
     reset_server_metrics(stats_path=stats_path)
 
     from .admin.accuracy_benchmark import configure_accuracy_result_storage
-    configure_accuracy_result_storage(base_path)
+    configure_accuracy_result_storage(base_path, _server_state.model_catalog)
     from .admin.benchmark import configure_performance_result_storage
     configure_performance_result_storage(base_path, _server_state.model_catalog)
 

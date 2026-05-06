@@ -89,6 +89,17 @@ class BaseBenchmark(ABC):
         """Max tokens to generate per question. Override for longer answers."""
         return 128
 
+    def resolve_max_tokens(self, engine: Any, enable_thinking: bool = False) -> int:
+        """Resolve benchmark-controlled generation budget for one question."""
+        max_tokens = self.get_max_tokens()
+        # Harmony models (gpt_oss) use analysis + final channels;
+        # analysis can consume the entire budget before final is emitted
+        if getattr(engine, "model_type", None) == "gpt_oss":
+            return max(max_tokens * 4, 8192)
+        if enable_thinking:
+            return min(max(max_tokens, THINKING_MIN_TOKENS), THINKING_MAX_TOKENS)
+        return max_tokens
+
     def get_category(self, item: dict) -> Optional[str]:
         """Return category/subject for per-category scoring. None if N/A."""
         return None
@@ -188,20 +199,11 @@ class BaseBenchmark(ABC):
         messages = self.format_prompt(item)
         prompt_text = "\n".join(m.get("content", "") for m in messages)
         kwargs = dict(sampling_kwargs or {})
-        # Force benchmark-controlled params (override model settings)
-        max_tokens = self.get_max_tokens()
-        # Harmony models (gpt_oss) use analysis + final channels;
-        # analysis can consume the entire budget before final is emitted
-        if getattr(engine, "model_type", None) == "gpt_oss":
-            max_tokens = max(max_tokens * 4, 8192)
-        elif enable_thinking:
-            max_tokens = min(
-                max(max_tokens, THINKING_MIN_TOKENS), THINKING_MAX_TOKENS
-            )
-        kwargs["max_tokens"] = max_tokens
-        kwargs["temperature"] = 0.0
-        kwargs["presence_penalty"] = 0.0
-        kwargs["repetition_penalty"] = 1.0
+        # Benchmark owns answer budget; sampling policy is supplied by caller.
+        kwargs["max_tokens"] = self.resolve_max_tokens(engine, enable_thinking)
+        kwargs.setdefault("temperature", 0.0)
+        kwargs.setdefault("presence_penalty", 0.0)
+        kwargs.setdefault("repetition_penalty", 1.0)
         # Merge enable_thinking into any existing chat_template_kwargs
         ct_kwargs = kwargs.pop("chat_template_kwargs", {}) or {}
         ct_kwargs["enable_thinking"] = enable_thinking
