@@ -419,6 +419,7 @@ class TestRunAccuracyBenchmark:
         mock_evaluator = MagicMock()
         mock_evaluator.load_dataset = AsyncMock(return_value=[{"id": "1"}])
         mock_evaluator.run = AsyncMock(return_value=mock_result)
+        mock_evaluator.resolve_max_tokens.return_value = 128
 
         mock_bench_cls = MagicMock(return_value=mock_evaluator)
 
@@ -433,6 +434,7 @@ class TestRunAccuracyBenchmark:
         result_event = next(e for e in events if e["type"] == "result")
         assert result_event["data"]["batch_size"] == 1
         assert result_event["data"]["result_id"]
+        json.dumps(result_event)
         result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
         assert len(result_files) == 1
         assert run.status == "completed"

@@ -272,22 +272,23 @@ def _run_with_tests(code: str, test_code: str, entry_point: str) -> CodeCheckRes
 def _candidate_codes(response: str, prompt: str) -> list[tuple[str, str]]:
     """Build deterministic HumanEval candidates from canonical and chat output."""
     extracted = _extract_response_code(response)
-    candidates: list[tuple[str, str]] = [
-        ("canonical_raw", prompt + response),
-    ]
-
-    if extracted != response:
-        candidates.append(("canonical_extracted", prompt + extracted))
+    candidates: list[tuple[str, str]] = []
 
     if "def " in extracted:
         candidates.append(
             ("standalone_function", _prepend_imports_if_needed(extracted, prompt))
         )
+        candidates.append(("canonical_raw", prompt + response))
+        if extracted != response:
+            candidates.append(("canonical_extracted", prompt + extracted))
         candidates.append((
             "canonical_normalize_indent",
             prompt + _normalize_body_indentation(extracted),
         ))
     else:
+        candidates.append(("canonical_raw", prompt + response))
+        if extracted != response:
+            candidates.append(("canonical_extracted", prompt + extracted))
         candidates.append(("canonical_indented", prompt + _indent_body_if_needed(extracted)))
         candidates.append(("canonical_top_level_indent", prompt + _indent_top_level_lines(extracted)))
         candidates.append((
