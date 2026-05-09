@@ -94,7 +94,8 @@
                                                       'bg-neutral-100 text-neutral-600 border-neutral-200': model.catalog?.source === 'local' || !model.catalog?.source,
                                                   }"
                                                   x-text="modelSourceLabel(model)"></span>
-                                            <span class="px-1.5 py-0.5 text-[10px] font-medium rounded border"
+                                            <span x-show="model.catalog?.repo_id" x-cloak
+                                                  class="px-1.5 py-0.5 text-[10px] font-medium rounded border"
                                                   :class="{
                                                       'bg-green-50 text-green-700 border-green-200': model.catalog?.update_status === 'current',
                                                       'bg-amber-50 text-amber-700 border-amber-200': model.catalog?.update_status === 'update_available',
@@ -107,12 +108,10 @@
                                                       x-text="models.find(m => m.id === model.name)?.settings?.model_alias"></span>
                                             </template>
                                             <span class="text-xs text-neutral-400 flex-shrink-0" x-text="'(' + model.size_formatted + ')'"></span>
-                                            <span x-show="modelPerfLabel(model)" x-cloak
-                                                  class="text-xs text-neutral-500 flex-shrink-0"
-                                                  x-text="modelPerfLabel(model)"></span>
-                                            <span x-show="modelAccuracyLabel(model)" x-cloak
-                                                  class="text-xs text-green-600 flex-shrink-0"
-                                                  x-text="modelAccuracyLabel(model)"></span>
+                                            <template x-for="tag in modelTags(model)" :key="tag">
+                                                <span class="px-1.5 py-0.5 text-[10px] font-medium rounded bg-orange-50 text-orange-700 border border-orange-200 truncate max-w-[96px]"
+                                                      x-text="tag"></span>
+                                            </template>
                                             <a x-show="model.catalog?.repo_id" x-cloak
                                                :href="model.catalog?.source === 'hf' ? 'https://huggingface.co/' + model.catalog.repo_id : 'https://modelscope.cn/models/' + model.catalog.repo_id"
                                                target="_blank"
@@ -130,10 +129,29 @@
                                             </button>
                                         </div>
                                         <div class="flex items-center gap-2 ml-4 shrink-0">
+                                            <div x-show="modelAccuracyLabel(model) || modelPerfPp(model) || modelPerfTg(model)" x-cloak
+                                                 class="flex items-center gap-1.5 mr-1 text-xs tabular-nums">
+                                                <span x-show="modelAccuracyLabel(model)" x-cloak
+                                                      class="px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 font-medium"
+                                                      :title="modelAccuracyTooltip(model)"
+                                                      x-text="modelAccuracyLabel(model)"></span>
+                                                <span x-show="modelPerfPp(model)" x-cloak
+                                                      class="px-1.5 py-0.5 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200"
+                                                      :title="modelPerfTooltip(model, 'pp')">
+                                                    <span aria-hidden="true">↓</span>
+                                                    <span x-text="modelPerfPp(model)"></span>
+                                                </span>
+                                                <span x-show="modelPerfTg(model)" x-cloak
+                                                      class="px-1.5 py-0.5 rounded-md bg-neutral-100 text-neutral-600 border border-neutral-200"
+                                                      :title="modelPerfTooltip(model, 'tg')">
+                                                    <span aria-hidden="true">↑</span>
+                                                    <span x-text="modelPerfTg(model)"></span>
+                                                </span>
+                                            </div>
                                             <button x-show="model.catalog?.repo_id" x-cloak
                                                     @click="checkModelUpdate(model)"
                                                     class="p-1.5 text-neutral-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all"
-                                                    title="Check for updates">
+                                                    title="Check remote update">
                                                 <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                                             </button>
                                             <button @click="openModelSettingsByName(model.name)"

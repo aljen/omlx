@@ -158,6 +158,7 @@ class ModelSettingsRequest(BaseModel):
     is_default: bool | None = None
     # Security: per-model opt-in for trust_remote_code (issue #926)
     trust_remote_code: bool | None = None
+    tags: list[str] | None = None
 
 
 class CreateProfileRequest(BaseModel):
@@ -198,6 +199,23 @@ class UpdateTemplateRequest(BaseModel):
     display_name: str | None = None
     description: str | None = None
     settings: dict[str, Any] | None = None
+
+
+def _normalize_model_tags(tags: list[str] | None) -> list[str]:
+    """Trim, de-duplicate, and cap user model tags for UI metadata storage."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in tags or []:
+        tag = str(raw_tag).strip()
+        if not tag:
+            continue
+        tag = tag[:64]
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(tag)
+    return normalized
 
 
 class GlobalSettingsRequest(BaseModel):
@@ -2349,6 +2367,8 @@ async def update_model_settings(
             server_state.default_model = model_id
     if "trust_remote_code" in sent:
         current_settings.trust_remote_code = bool(request.trust_remote_code)
+    if "tags" in sent:
+        current_settings.tags = _normalize_model_tags(request.tags)
 
     # If an active profile was set, clear it when the user's save diverges
     # from the profile's stored values.  Only compare fields present in

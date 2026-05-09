@@ -407,6 +407,19 @@ class TestHumanEval:
         assert result.passed is True
         assert result.pass_mode == "standalone_function"
 
+    def test_malformed_long_python_fence_is_extracted(self):
+        from omlx.eval.humaneval import _extract_response_code
+        response = "``````python\n    return 1\n```"
+        assert _extract_response_code(response) == "    return 1"
+
+    def test_internal_name_error_is_not_missing_entry_point(self):
+        from omlx.eval.humaneval import _run_with_tests
+        code = "def f():\n    python\n"
+        test = "def check(candidate):\n    candidate()"
+        result = _run_with_tests(code, test, "f")
+        assert result.passed is False
+        assert result.failure_type == "runtime_error"
+
     def test_syntax_error_is_categorized(self):
         from omlx.eval.humaneval import HumanEvalBenchmark
         item = {

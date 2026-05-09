@@ -113,6 +113,8 @@
                 max_tool_result_tokens: null,
                 ctKwargEntries: [],
                 trust_remote_code: false,
+                tags: [],
+                tagInput: '',
             },
             savingModelSettings: false,
             loadingGenDefaults: false,
@@ -963,12 +965,30 @@
                 return 'Not checked';
             },
 
-            modelPerfLabel(model) {
+            modelPerfPp(model) {
+                const value = model?.catalog?.best_perf_summary?.pp_tps;
+                return value ? value.toFixed(1) : '';
+            },
+
+            modelPerfTg(model) {
+                const value = model?.catalog?.best_perf_summary?.tg_tps;
+                return value ? value.toFixed(1) : '';
+            },
+
+            modelPerfTooltip(model, kind) {
                 const summary = model?.catalog?.best_perf_summary || {};
-                if (!summary.tg_tps && !summary.pp_tps) return '';
-                const pp = summary.pp_tps ? summary.pp_tps.toFixed(1) : '-';
-                const tg = summary.tg_tps ? summary.tg_tps.toFixed(1) : '-';
-                return `pp ${pp} / tg ${tg}`;
+                const value = kind === 'pp' ? summary.pp_tps : summary.tg_tps;
+                if (!value) return '';
+                const label = kind === 'pp' ? 'Prompt processing' : 'Token generation';
+                return `${label}: ${value.toFixed(1)} tok/s`;
+            },
+
+            accuracyShortLabel(benchmark) {
+                const normalized = String(benchmark || '').toLowerCase();
+                if (normalized === 'humaneval') return 'HE';
+                if (normalized === 'mbpp') return 'MBPP';
+                if (normalized === 'livecodebench') return 'LCB';
+                return String(benchmark || '').toUpperCase();
             },
 
             modelAccuracyLabel(model) {
@@ -976,7 +996,55 @@
                 if (!summary.benchmark || summary.accuracy == null) return '';
                 const pct = (summary.accuracy * 100).toFixed(1);
                 const thinking = summary.thinking_used ? ' think' : '';
-                return `${summary.benchmark.toUpperCase()} ${pct}%${thinking}`;
+                return `${this.accuracyShortLabel(summary.benchmark)} ${pct}%${thinking}`;
+            },
+
+            modelAccuracyTooltip(model) {
+                const summary = model?.catalog?.best_accuracy_summary || {};
+                if (!summary.benchmark || summary.accuracy == null) return '';
+                const pct = (summary.accuracy * 100).toFixed(1);
+                const parts = [`${summary.benchmark}: ${pct}%`];
+                if (summary.correct != null && summary.total != null) {
+                    parts.push(`${summary.correct}/${summary.total}`);
+                }
+                parts.push(summary.thinking_used ? 'thinking enabled' : 'thinking disabled');
+                if (summary.sampling_profile) parts.push(`profile: ${summary.sampling_profile}`);
+                return parts.join(' | ');
+            },
+
+            modelTags(model) {
+                const id = model?.id || model?.name;
+                const live = id ? this.models.find(m => m.id === id) : null;
+                const tags = live?.settings?.tags || model?.settings?.tags || [];
+                return Array.isArray(tags) ? tags : [];
+            },
+
+            hasModelSettingsTag(tag) {
+                const needle = String(tag || '').trim().toLowerCase();
+                return (this.modelSettings.tags || []).some(t => String(t).trim().toLowerCase() === needle);
+            },
+
+            addModelSettingsTag(tag) {
+                const value = String(tag || this.modelSettings.tagInput || '').trim();
+                if (!value || this.hasModelSettingsTag(value)) {
+                    this.modelSettings.tagInput = '';
+                    return;
+                }
+                this.modelSettings.tags = [...(this.modelSettings.tags || []), value.slice(0, 64)];
+                this.modelSettings.tagInput = '';
+            },
+
+            removeModelSettingsTag(tag) {
+                const needle = String(tag || '').trim().toLowerCase();
+                this.modelSettings.tags = (this.modelSettings.tags || []).filter(
+                    current => String(current).trim().toLowerCase() !== needle
+                );
+            },
+
+            handleModelSettingsTagInput(event) {
+                if (event.key !== 'Enter' && event.key !== ',') return;
+                event.preventDefault();
+                this.addModelSettingsTag(this.modelSettings.tagInput);
             },
 
             async checkModelUpdate(model) {
@@ -1741,6 +1809,8 @@
                     vlm_mtp_draft_block_size: settings.vlm_mtp_draft_block_size ?? null,
                     ctKwargEntries,
                     trust_remote_code: settings.trust_remote_code || false,
+                    tags: Array.isArray(settings.tags) ? [...settings.tags] : [],
+                    tagInput: '',
                 };
                 this.showModelSettingsModal = true;
             },
@@ -1874,6 +1944,7 @@
                                     ? parseInt(this.modelSettings.vlm_mtp_draft_block_size)
                                     : null,
                                 trust_remote_code: this.modelSettings.trust_remote_code,
+                                tags: this.modelSettings.tags || [],
                             };
                         })()),
                     });

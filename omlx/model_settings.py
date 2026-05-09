@@ -96,6 +96,7 @@ class ModelSettings:
         is_default: Use this model when no model is specified.
         display_name: Human-readable name for UI display.
         description: Optional description of the model.
+        tags: User-defined UI labels for grouping/filtering models.
         active_profile_name: Name of the currently-applied profile (None = no profile).
     """
 
@@ -183,6 +184,7 @@ class ModelSettings:
     # Metadata
     display_name: Optional[str] = None
     description: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
     active_profile_name: Optional[str] = None  # Name of the currently-applied profile
 
     def __post_init__(self) -> None:

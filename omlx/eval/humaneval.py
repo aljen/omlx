@@ -97,7 +97,7 @@ def _extract_code(response: str, prompt: str) -> str:
     return prompt + response
 
 
-def _classify_error(error: str) -> str:
+def _classify_error(error: str, entry_point: str | None = None) -> str:
     if not error:
         return "wrong_answer"
     if "IndentationError" in error:
@@ -105,7 +105,9 @@ def _classify_error(error: str) -> str:
     if "SyntaxError" in error:
         return "syntax_error"
     if "NameError" in error and "is not defined" in error:
-        return "missing_entry_point"
+        if entry_point and f"name '{entry_point}' is not defined" in error:
+            return "missing_entry_point"
+        return "runtime_error"
     if "AssertionError" in error:
         return "wrong_answer"
     if "timed out" in error.lower():
@@ -130,10 +132,16 @@ def _prepend_imports_if_needed(code: str, prompt: str) -> str:
 def _extract_response_code(response: str) -> str:
     """Extract code while preserving body indentation where possible."""
     response = response.strip("\n")
-    blocks = re.findall(r"```python\s*\n(.*?)```", response, re.DOTALL)
+    blocks = re.findall(
+        r"(?ms)^[ \t]*`{3,}[ \t]*(?:python|py)[^\n]*\n(.*?)[ \t]*`{3,}[ \t]*$",
+        response,
+    )
     if blocks:
         return blocks[-1].strip("\n")
-    blocks = re.findall(r"```\s*\n(.*?)```", response, re.DOTALL)
+    blocks = re.findall(
+        r"(?ms)^[ \t]*`{3,}[^\n]*\n(.*?)[ \t]*`{3,}[ \t]*$",
+        response,
+    )
     if blocks:
         return blocks[-1].strip("\n")
     return response
@@ -263,7 +271,7 @@ def _run_with_tests(code: str, test_code: str, entry_point: str) -> CodeCheckRes
         return CodeCheckResult(passed=True, failure_type="passed", code=code)
     return CodeCheckResult(
         passed=False,
-        failure_type=_classify_error(error),
+        failure_type=_classify_error(error, entry_point),
         error=error,
         code=code,
     )

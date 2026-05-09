@@ -25,8 +25,17 @@ class TestModelSettings:
         assert settings.force_sampling is False
         assert settings.is_pinned is False
         assert settings.is_default is False
+        assert settings.tags == []
         # Issue #926: opt-in per model. Default off.
         assert settings.trust_remote_code is False
+
+    def test_tags_roundtrip(self):
+        """Test user tags survive to_dict -> from_dict roundtrip."""
+        original = ModelSettings(tags=["Dense", "Qwen3.6"])
+        d = original.to_dict()
+        assert d["tags"] == ["Dense", "Qwen3.6"]
+        restored = ModelSettings.from_dict(d)
+        assert restored.tags == ["Dense", "Qwen3.6"]
 
     def test_trust_remote_code_roundtrip(self):
         """Test trust_remote_code field survives to_dict -> from_dict roundtrip."""
@@ -398,6 +407,18 @@ class TestModelSettingsManager:
             manager2 = ModelSettingsManager(Path(tmpdir))
             loaded = manager2.get_settings("test-model")
             assert loaded.repetition_penalty == 1.3
+
+    def test_tags_persist(self):
+        """Test user tags survive save/load cycle."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ModelSettingsManager(Path(tmpdir))
+
+            settings = ModelSettings(tags=["Dense", "Qwen3.6"])
+            manager.set_settings("test-model", settings)
+
+            manager2 = ModelSettingsManager(Path(tmpdir))
+            loaded = manager2.get_settings("test-model")
+            assert loaded.tags == ["Dense", "Qwen3.6"]
 
     def test_exclusive_default(self):
         """Test only one model can be default."""
