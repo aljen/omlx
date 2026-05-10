@@ -399,7 +399,7 @@
             // bench is running" banner + disables Start so the user doesn't
             // race a 409 on the server.
             benchOtherActive: null,
-            benchUploadToOmlx: false,
+            benchUploadToOmlx: true,
 
             // Bench sub-tab & dropdown
             benchTab: 'throughput',
