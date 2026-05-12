@@ -10,9 +10,6 @@ SECURITY NOTE: This benchmark executes model-generated code on the local
 machine. Mitigations: subprocess with timeout, memory limits, temp file cleanup.
 """
 
-import asyncio
-from dataclasses import dataclass
-import json
 import logging
 import os
 import re
@@ -21,10 +18,11 @@ import subprocess
 import tempfile
 import textwrap
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .base import BaseBenchmark, BenchmarkResult, QuestionResult
+from .base import BaseBenchmark, BenchmarkResult, EvalGenerated, QuestionResult
 from .datasets import deterministic_sample, load_jsonl
 
 logger = logging.getLogger(__name__)
@@ -70,7 +68,10 @@ def _extract_code(response: str, prompt: str) -> str:
         code = match.group(1).strip()
         if "def " in code:
             # Model included full function — prepend imports if missing
-            if imports and not any(line.strip().startswith(("import ", "from ")) for line in code.split("\n")):
+            if imports and not any(
+                line.strip().startswith(("import ", "from "))
+                for line in code.split("\n")
+            ):
                 return imports + "\n\n" + code
             return code
         return prompt + code
@@ -79,7 +80,10 @@ def _extract_code(response: str, prompt: str) -> str:
     if match:
         code = match.group(1).strip()
         if "def " in code:
-            if imports and not any(line.strip().startswith(("import ", "from ")) for line in code.split("\n")):
+            if imports and not any(
+                line.strip().startswith(("import ", "from "))
+                for line in code.split("\n")
+            ):
                 return imports + "\n\n" + code
             return code
         return prompt + code
@@ -117,8 +121,7 @@ def _classify_error(error: str, entry_point: str | None = None) -> str:
 
 def _has_imports(code: str) -> bool:
     return any(
-        line.strip().startswith(("import ", "from "))
-        for line in code.split("\n")
+        line.strip().startswith(("import ", "from ")) for line in code.split("\n")
     )
 
 
@@ -209,16 +212,22 @@ def _normalize_body_indentation(body: str) -> str:
 def _set_resource_limits():
     """Set resource limits for subprocess."""
     try:
-        resource.setrlimit(resource.RLIMIT_AS, (EXEC_MEMORY_LIMIT_BYTES, EXEC_MEMORY_LIMIT_BYTES))
+        resource.setrlimit(
+            resource.RLIMIT_AS, (EXEC_MEMORY_LIMIT_BYTES, EXEC_MEMORY_LIMIT_BYTES)
+        )
     except (ValueError, resource.error):
         pass
     try:
-        resource.setrlimit(resource.RLIMIT_CPU, (EXEC_TIMEOUT_SECONDS + 5, EXEC_TIMEOUT_SECONDS + 5))
+        resource.setrlimit(
+            resource.RLIMIT_CPU, (EXEC_TIMEOUT_SECONDS + 5, EXEC_TIMEOUT_SECONDS + 5)
+        )
     except (ValueError, resource.error):
         pass
 
 
-def _execute_with_tests(code: str, test_code: str, entry_point: str) -> tuple[bool, str]:
+def _execute_with_tests(
+    code: str, test_code: str, entry_point: str
+) -> tuple[bool, str]:
     """Execute generated code with test cases.
 
     Combines the generated function with test assertions and runs in subprocess.
@@ -289,20 +298,28 @@ def _candidate_codes(response: str, prompt: str) -> list[tuple[str, str]]:
         candidates.append(("canonical_raw", prompt + response))
         if extracted != response:
             candidates.append(("canonical_extracted", prompt + extracted))
-        candidates.append((
-            "canonical_normalize_indent",
-            prompt + _normalize_body_indentation(extracted),
-        ))
+        candidates.append(
+            (
+                "canonical_normalize_indent",
+                prompt + _normalize_body_indentation(extracted),
+            )
+        )
     else:
         candidates.append(("canonical_raw", prompt + response))
         if extracted != response:
             candidates.append(("canonical_extracted", prompt + extracted))
-        candidates.append(("canonical_indented", prompt + _indent_body_if_needed(extracted)))
-        candidates.append(("canonical_top_level_indent", prompt + _indent_top_level_lines(extracted)))
-        candidates.append((
-            "canonical_normalize_indent",
-            prompt + _normalize_body_indentation(extracted),
-        ))
+        candidates.append(
+            ("canonical_indented", prompt + _indent_body_if_needed(extracted))
+        )
+        candidates.append(
+            ("canonical_top_level_indent", prompt + _indent_top_level_lines(extracted))
+        )
+        candidates.append(
+            (
+                "canonical_normalize_indent",
+                prompt + _normalize_body_indentation(extracted),
+            )
+        )
 
     seen: set[str] = set()
     unique: list[tuple[str, str]] = []
@@ -325,13 +342,15 @@ class HumanEvalBenchmark(BaseBenchmark):
 
         normalized = []
         for item in items:
-            normalized.append({
-                "id": item["task_id"],
-                "prompt": item["prompt"],
-                "test": item["test"],
-                "entry_point": item["entry_point"],
-                "question": item["prompt"],  # for get_question_text
-            })
+            normalized.append(
+                {
+                    "id": item["task_id"],
+                    "prompt": item["prompt"],
+                    "test": item["test"],
+                    "entry_point": item["entry_point"],
+                    "question": item["prompt"],  # for get_question_text
+                }
+            )
 
         logger.info(f"HumanEval: loaded {len(normalized)} problems")
 
@@ -397,54 +416,42 @@ class HumanEvalBenchmark(BaseBenchmark):
         sampling_kwargs: Optional[dict] = None,
         enable_thinking: bool = False,
     ) -> BenchmarkResult:
-        """Override run: generation is batched, code execution is sequential."""
-        results: list[QuestionResult] = []
-        correct = 0
+        """Override run: generation is queued, code execution is sequential."""
         start_time = time.time()
-        completed = 0
 
-        for batch_start in range(0, len(items), batch_size):
-            batch_end = min(batch_start + batch_size, len(items))
-            batch = items[batch_start:batch_end]
-            batch_time = time.time()
+        def score_generated(generated: EvalGenerated) -> QuestionResult:
+            check = self.evaluate_response(generated.response_text, generated.item)
+            code = check.code
+            is_correct = check.passed
+            return QuestionResult(
+                question_id=str(generated.item.get("id", generated.index)),
+                correct=is_correct,
+                expected="(unit tests)",
+                predicted=code[:200] + "..." if len(code) > 200 else code,
+                time_seconds=generated.generation_seconds,
+                question_text=generated.prompt_text,
+                raw_response=generated.response_text,
+                category=self.get_category(generated.item),
+                pass_mode=check.pass_mode,
+                failure_type=check.failure_type,
+                error=check.error,
+            )
 
-            gen_tasks = [
-                self._eval_single(engine, item, batch_start + j, sampling_kwargs, enable_thinking)
-                for j, item in enumerate(batch)
-            ]
-            gen_results = await asyncio.gather(*gen_tasks)
-            gen_elapsed = time.time() - batch_time
-
-            for idx, item, response_text, prompt_text, _raw in sorted(gen_results, key=lambda x: x[0]):
-                check = self.evaluate_response(response_text, item)
-                code = check.code
-                is_correct = check.passed
-
-                if is_correct:
-                    correct += 1
-
-                results.append(
-                    QuestionResult(
-                        question_id=str(item.get("id", idx)),
-                        correct=is_correct,
-                        expected="(unit tests)",
-                        predicted=code[:200] + "..." if len(code) > 200 else code,
-                        time_seconds=gen_elapsed / len(batch),
-                        question_text=prompt_text,
-                        raw_response=response_text,
-                        category=self.get_category(item),
-                        pass_mode=check.pass_mode,
-                        failure_type=check.failure_type,
-                        error=check.error,
-                    )
-                )
-
-            completed += len(batch)
-            if on_progress:
-                await on_progress(completed, len(items))
+        results, _ = await self._run_refill_queue(
+            engine,
+            list(enumerate(items)),
+            batch_size=batch_size,
+            sampling_kwargs=sampling_kwargs,
+            enable_thinking=enable_thinking,
+            score_generated=score_generated,
+            on_progress=on_progress,
+            total_items=len(items),
+            score_concurrency=1,
+        )
 
         total_time = time.time() - start_time
         total = len(items)
+        correct = sum(1 for result in results if result.correct)
 
         return BenchmarkResult(
             benchmark_name=self.name,
