@@ -22,6 +22,27 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _infer_download_provenance(path: str) -> dict[str, str]:
+    """Infer remote provenance from downloader-created local_dir layouts."""
+    if not path:
+        return {}
+
+    model_path = Path(path)
+    if (
+        (model_path / ".cache" / "huggingface").exists()
+        and model_path.parent.name
+        and model_path.parent.name != "models"
+    ):
+        repo_id = f"{model_path.parent.name}/{model_path.name}"
+        return {
+            "source": "hf",
+            "provider": "huggingface",
+            "repo_id": repo_id,
+        }
+
+    return {}
+
+
 @dataclass
 class ModelCatalogEntry:
     """Durable metadata for one discovered local model."""
@@ -132,11 +153,24 @@ class ModelCatalog:
                 local_revision=local_revision or remote_revision,
                 remote_revision=remote_revision,
                 remote_updated_at=remote_updated_at,
-                last_checked_at=utc_now() if remote_revision or remote_updated_at else "",
-                update_status="current" if remote_revision or remote_updated_at else "not_checked",
+                last_checked_at=(
+                    utc_now() if remote_revision or remote_updated_at else ""
+                ),
+                update_status=(
+                    "current" if remote_revision or remote_updated_at else "not_checked"
+                ),
                 removed=False,
                 last_perf_result_id=existing.last_perf_result_id if existing else "",
                 best_perf_summary=existing.best_perf_summary if existing else {},
+                last_accuracy_result_id=(
+                    existing.last_accuracy_result_id if existing else ""
+                ),
+                best_accuracy_summary=(
+                    existing.best_accuracy_summary if existing else {}
+                ),
+                accuracy_summaries_by_benchmark=(
+                    existing.accuracy_summaries_by_benchmark if existing else {}
+                ),
             )
             self._entries[model_id] = entry
             self._save_locked()
@@ -151,15 +185,31 @@ class ModelCatalog:
                 if not model_id:
                     continue
                 entry = self._entries.get(model_id)
+                provenance = _infer_download_provenance(path)
                 if entry is None:
                     self._entries[model_id] = ModelCatalogEntry(
                         model_id=model_id,
                         path=path,
-                        source="local" if path else "unknown",
-                        provider="local" if path else "",
+                        source=provenance.get(
+                            "source",
+                            "local" if path else "unknown",
+                        ),
+                        provider=provenance.get(
+                            "provider",
+                            "local" if path else "",
+                        ),
+                        repo_id=provenance.get("repo_id", ""),
                     )
                 else:
                     entry.path = path or entry.path
+                    if (
+                        provenance
+                        and entry.source in ("local", "unknown")
+                        and not entry.repo_id
+                    ):
+                        entry.source = provenance["source"]
+                        entry.provider = provenance["provider"]
+                        entry.repo_id = provenance["repo_id"]
                     entry.removed = False
             for model_id, entry in self._entries.items():
                 if model_id not in seen:
@@ -187,18 +237,24 @@ class ModelCatalog:
                 entry.remote_updated_at = remote_updated_at or entry.remote_updated_at
                 if remote_revision and entry.local_revision:
                     entry.update_status = (
-                        "current" if remote_revision == entry.local_revision else "update_available"
+                        "current"
+                        if remote_revision == entry.local_revision
+                        else "update_available"
                     )
                 elif remote_updated_at and old_remote_updated_at:
                     entry.update_status = (
-                        "current" if remote_updated_at == old_remote_updated_at else "update_available"
+                        "current"
+                        if remote_updated_at == old_remote_updated_at
+                        else "update_available"
                     )
                 else:
                     entry.update_status = "unknown"
             self._save_locked()
             return entry.to_public_dict()
 
-    def update_perf_summary(self, model_id: str, result_id: str, summary: dict[str, Any]) -> None:
+    def update_perf_summary(
+        self, model_id: str, result_id: str, summary: dict[str, Any]
+    ) -> None:
         with self._lock:
             entry = self._entries.get(model_id)
             if entry is None:
@@ -208,7 +264,9 @@ class ModelCatalog:
             entry.best_perf_summary = summary
             self._save_locked()
 
-    def replace_accuracy_summaries(self, summaries_by_model: dict[str, dict[str, Any]]) -> None:
+    def replace_accuracy_summaries(
+        self, summaries_by_model: dict[str, dict[str, Any]]
+    ) -> None:
         """Replace catalog accuracy summaries with a recomputed snapshot."""
         with self._lock:
             for entry in self._entries.values():
@@ -219,10 +277,16 @@ class ModelCatalog:
             for model_id, summary in summaries_by_model.items():
                 entry = self._entries.get(model_id)
                 if entry is None:
-                    entry = ModelCatalogEntry(model_id=model_id, path="", source="unknown")
+                    entry = ModelCatalogEntry(
+                        model_id=model_id, path="", source="unknown"
+                    )
                     self._entries[model_id] = entry
-                entry.last_accuracy_result_id = summary.get("last_accuracy_result_id", "")
-                entry.best_accuracy_summary = dict(summary.get("best_accuracy_summary") or {})
+                entry.last_accuracy_result_id = summary.get(
+                    "last_accuracy_result_id", ""
+                )
+                entry.best_accuracy_summary = dict(
+                    summary.get("best_accuracy_summary") or {}
+                )
                 entry.accuracy_summaries_by_benchmark = dict(
                     summary.get("accuracy_summaries_by_benchmark") or {}
                 )

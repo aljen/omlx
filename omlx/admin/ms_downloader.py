@@ -978,7 +978,7 @@ class MSDownloader:
                 if self._catalog is not None:
                     try:
                         self._catalog.record_download(
-                            model_id=model_name,
+                            model_id=target_dir.name,
                             path=target_dir,
                             source="modelscope",
                             repo_id=task.repo_id,

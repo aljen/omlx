@@ -870,7 +870,7 @@ class HFDownloader:
                 if self._catalog is not None:
                     try:
                         self._catalog.record_download(
-                            model_id=model_name,
+                            model_id=target_dir.name,
                             path=target_dir,
                             source="hf",
                             repo_id=task.repo_id,
