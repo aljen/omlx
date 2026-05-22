@@ -54,7 +54,7 @@ class AccuracyBenchmarkRequest(BaseModel):
     benchmarks: dict[str, int]  # name -> sample_size (0 = full dataset)
     batch_size: int = 1
     enable_thinking: bool = False
-    sampling_profile: str = "model_settings"
+    sampling_profile: str = "deterministic"
 
     @field_validator("batch_size")
     @classmethod

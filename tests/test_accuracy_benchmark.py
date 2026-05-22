@@ -80,12 +80,12 @@ class TestAccuracyBenchmarkRequest:
         )
         assert req.enable_thinking is True
 
-    def test_sampling_profile_defaults_to_model_settings(self):
+    def test_sampling_profile_defaults_to_deterministic(self):
         req = AccuracyBenchmarkRequest(
             model_id="test-model",
             benchmarks={"mmlu": 100},
         )
-        assert req.sampling_profile == "model_settings"
+        assert req.sampling_profile == "deterministic"
 
     def test_invalid_sampling_profile_rejected(self):
         with pytest.raises(Exception):

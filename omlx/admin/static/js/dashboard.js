@@ -454,7 +454,7 @@
             ],
             accBatchSize: 1,
             accEnableThinking: false,
-            accSamplingProfile: 'model_settings',
+            accSamplingProfile: 'deterministic',
             accRunning: false,
             accCurrentModel: '',
             accCurrentBenchId: null,
