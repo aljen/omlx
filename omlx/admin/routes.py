@@ -4619,7 +4619,9 @@ async def clear_hot_cache(is_admin: bool = Depends(require_admin)):
             rate_tracker.clear()
         executor = getattr(core, "_mlx_executor", None)
         if executor is not None:
-            reclaim_targets.append((model_id, executor, getattr(scheduler, "_stream", None)))
+            reclaim_targets.append(
+                (model_id, executor, getattr(scheduler, "_stream", None))
+            )
 
     # Also clear managers orphaned by an abnormal teardown: they hold live
     # hot cache but are no longer attached to a loaded scheduler, so the loop
@@ -5050,15 +5052,14 @@ async def list_hf_models(is_admin: bool = Depends(require_admin)):
     model_dirs = global_settings.model.get_model_dirs(global_settings.base_path)
 
     from ..model_discovery import _resolve_hf_cache_entry
+
     catalog = _get_model_catalog()
 
     def _add_model(model_path: Path, model_name: str) -> None:
         if model_name in seen_names:
             return
         seen_names.add(model_name)
-        total_size = sum(
-            f.stat().st_size for f in model_path.rglob("*") if f.is_file()
-        )
+        total_size = sum(f.stat().st_size for f in model_path.rglob("*") if f.is_file())
         item = {
             "name": model_name,
             "path": str(model_path),

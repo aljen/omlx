@@ -103,16 +103,18 @@ class BenchmarkRun:
     # the stream. Phases: "idle" → "uploading" → "done" | "skipped". The
     # browser HTML still consumes the SSE stream directly; this is purely
     # additive state that lives alongside it.
-    upload_state: dict = field(default_factory=lambda: {
-        "phase": "idle",
-        "results": [],          # per-context-length: {context_length, id?, url?, duplicate?, error?}
-        "total": 0,
-        "success_count": 0,
-        "failed_count": 0,
-        "owner_hash": None,     # display hash, populated on upload_done
-        "skipped_reason": None, # e.g. "experimental_features"
-        "skipped_features": [],
-    })
+    upload_state: dict = field(
+        default_factory=lambda: {
+            "phase": "idle",
+            "results": [],  # per-context-length: {context_length, id?, url?, duplicate?, error?}
+            "total": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "owner_hash": None,  # display hash, populated on upload_done
+            "skipped_reason": None,  # e.g. "experimental_features"
+            "skipped_features": [],
+        }
+    )
 
 
 # Event types that close the SSE stream for a bench run. `done` is NOT
@@ -976,8 +978,6 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
         logger.info("Benchmark: warmup complete")
 
         # Phase 3: Single request tests
-        single_pp1024_gen_tps = None
-
         for pp_len in request.prompt_lengths:
             current_test += 1
             await _send_event(
@@ -1007,10 +1007,6 @@ async def run_benchmark(run: BenchmarkRun, engine_pool: Any) -> None:
             run.results.append(result)
 
             await _send_event(run, {"type": "result", "data": result})
-
-            # Store pp1024 gen_tps for speedup calculation
-            if pp_len == 1024:
-                single_pp1024_gen_tps = metrics["gen_tps"]
 
         # Phase 4: Batch tests
         # Each request has a unique UUID prefix (no cache hits)

@@ -99,6 +99,7 @@ class TestAccuracyBenchmarkRequest:
 class TestQueueAndResults:
     def setup_method(self):
         from omlx.admin.accuracy_benchmark import _queue
+
         _queue.clear()
         configure_accuracy_result_storage(None)
         reset_accumulated_results()
@@ -121,7 +122,9 @@ class TestQueueAndResults:
         assert len(status["queue"]) == 0
 
     def test_accumulated_results(self):
-        _accumulated_results.append({"model_id": "m1", "benchmark": "mmlu", "accuracy": 0.5})
+        _accumulated_results.append(
+            {"model_id": "m1", "benchmark": "mmlu", "accuracy": 0.5}
+        )
         results = get_accumulated_results()
         assert len(results) == 1
         assert results[0]["model_id"] == "m1"
@@ -142,20 +145,26 @@ class TestQueueAndResults:
         assert len(get_accumulated_results()) == 1
 
     def test_reset_accumulated_results(self):
-        _accumulated_results.append({"model_id": "m1", "benchmark": "mmlu", "accuracy": 0.5})
+        _accumulated_results.append(
+            {"model_id": "m1", "benchmark": "mmlu", "accuracy": 0.5}
+        )
         reset_accumulated_results()
         assert len(get_accumulated_results()) == 0
 
     def test_persist_and_reload_accumulated_result(self, tmp_path):
         configure_accuracy_result_storage(tmp_path)
-        _append_accumulated_result({
-            "result_id": "a1",
-            "model_id": "m1",
-            "benchmark": "mmlu",
-            "accuracy": 0.5,
-        })
+        _append_accumulated_result(
+            {
+                "result_id": "a1",
+                "model_id": "m1",
+                "benchmark": "mmlu",
+                "accuracy": 0.5,
+            }
+        )
 
-        result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
+        result_files = list(
+            (tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json")
+        )
         assert len(result_files) == 1
 
         configure_accuracy_result_storage(tmp_path)
@@ -168,30 +177,34 @@ class TestQueueAndResults:
     def test_catalog_accuracy_summary_updates_and_recomputes(self, tmp_path):
         catalog = ModelCatalog(tmp_path)
         configure_accuracy_result_storage(tmp_path, catalog)
-        _append_accumulated_result({
-            "result_id": "a1",
-            "model_id": "m1",
-            "benchmark": "humaneval",
-            "accuracy": 0.75,
-            "correct": 3,
-            "total": 4,
-            "batch_size": 1,
-            "sampling_profile": "deterministic",
-            "effective_sampling": {"temperature": 0.0},
-            "thinking_used": False,
-        })
-        _append_accumulated_result({
-            "result_id": "b2",
-            "model_id": "m1",
-            "benchmark": "humaneval",
-            "accuracy": 0.9,
-            "correct": 9,
-            "total": 10,
-            "batch_size": 1,
-            "sampling_profile": "model_settings",
-            "effective_sampling": {"temperature": 0.6},
-            "thinking_used": False,
-        })
+        _append_accumulated_result(
+            {
+                "result_id": "a1",
+                "model_id": "m1",
+                "benchmark": "humaneval",
+                "accuracy": 0.75,
+                "correct": 3,
+                "total": 4,
+                "batch_size": 1,
+                "sampling_profile": "deterministic",
+                "effective_sampling": {"temperature": 0.0},
+                "thinking_used": False,
+            }
+        )
+        _append_accumulated_result(
+            {
+                "result_id": "b2",
+                "model_id": "m1",
+                "benchmark": "humaneval",
+                "accuracy": 0.9,
+                "correct": 9,
+                "total": 10,
+                "batch_size": 1,
+                "sampling_profile": "model_settings",
+                "effective_sampling": {"temperature": 0.6},
+                "thinking_used": False,
+            }
+        )
 
         entry = catalog.get_public("m1")
         assert entry["last_accuracy_result_id"] == "b2"
@@ -211,16 +224,18 @@ class TestQueueAndResults:
     def test_old_model_catalog_json_loads_without_accuracy_fields(self, tmp_path):
         catalog_path = tmp_path / "model_catalog.json"
         catalog_path.write_text(
-            json.dumps({
-                "version": 1,
-                "models": {
-                    "m1": {
-                        "model_id": "m1",
-                        "path": "/tmp/m1",
-                        "source": "local",
-                    }
-                },
-            }),
+            json.dumps(
+                {
+                    "version": 1,
+                    "models": {
+                        "m1": {
+                            "model_id": "m1",
+                            "path": "/tmp/m1",
+                            "source": "local",
+                        }
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         catalog = ModelCatalog(tmp_path)
@@ -230,13 +245,17 @@ class TestQueueAndResults:
 
     def test_delete_accumulated_result_removes_file(self, tmp_path):
         configure_accuracy_result_storage(tmp_path)
-        _append_accumulated_result({
-            "result_id": "a1",
-            "model_id": "m1",
-            "benchmark": "mmlu",
-            "accuracy": 0.5,
-        })
-        result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
+        _append_accumulated_result(
+            {
+                "result_id": "a1",
+                "model_id": "m1",
+                "benchmark": "mmlu",
+                "accuracy": 0.5,
+            }
+        )
+        result_files = list(
+            (tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json")
+        )
         assert len(result_files) == 1
 
         assert delete_accumulated_result("a1") is True
@@ -274,6 +293,7 @@ class TestQueueAndResults:
 class TestRunLifecycle:
     def setup_method(self):
         from omlx.admin.accuracy_benchmark import _accuracy_runs
+
         _accuracy_runs.clear()
         configure_accuracy_result_storage(None)
 
@@ -435,7 +455,9 @@ class TestRunAccuracyBenchmark:
         assert result_event["data"]["batch_size"] == 1
         assert result_event["data"]["result_id"]
         json.dumps(result_event)
-        result_files = list((tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json"))
+        result_files = list(
+            (tmp_path / "benchmarks" / "accuracy" / "results").glob("*.json")
+        )
         assert len(result_files) == 1
         assert run.status == "completed"
 
@@ -456,14 +478,16 @@ class TestRunAccuracyBenchmark:
 
         mock_evaluator = MagicMock()
         mock_evaluator.load_dataset = AsyncMock(return_value=[])
-        mock_evaluator.run = AsyncMock(return_value=MagicMock(
-            benchmark_name="mmlu",
-            accuracy=0.0,
-            total_questions=0,
-            correct_count=0,
-            time_seconds=0.0,
-            category_scores=None,
-        ))
+        mock_evaluator.run = AsyncMock(
+            return_value=MagicMock(
+                benchmark_name="mmlu",
+                accuracy=0.0,
+                total_questions=0,
+                correct_count=0,
+                time_seconds=0.0,
+                category_scores=None,
+            )
+        )
 
         mock_bench_cls = MagicMock(return_value=mock_evaluator)
 
